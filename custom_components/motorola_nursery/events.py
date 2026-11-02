@@ -94,6 +94,7 @@ class CameraEventListener:
             return parts
 
     async def _listen_once(self) -> None:
+        """Authenticate one detection channel and release its writer on every exit."""
         data = self._entry.data
         credentials = credentials_from_data(data)
         host = vendor_host(data[CONF_SESSION]["host"])
@@ -135,11 +136,12 @@ class CameraEventListener:
             self._writer = None
             if writer is not None:
                 writer.close()
-                with suppress(OSError, TimeoutError):
+                with suppress(OSError):
                     async with asyncio.timeout(2):
                         await writer.wait_closed()
 
     async def _run(self) -> None:
+        """Reconnect detections with backoff while propagating cancellation."""
         while True:
             try:
                 await self._listen_once()
@@ -150,7 +152,6 @@ class CameraEventListener:
                 KeyError,
                 OSError,
                 RuntimeError,
-                TimeoutError,
                 ValueError,
             ):
                 self._connection_callback(False)

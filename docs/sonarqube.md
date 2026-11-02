@@ -49,3 +49,59 @@ is limited to moderate merge risk. Path instructions focus on HA lifecycle,
 protocol correctness, tests and workflow security. AGENTS.md owns integration
 constraints. Keep the existing CodeRabbit required check and review protection.
 Gitar is not used for these repositories.
+
+## Dependency lock maintenance
+
+The readable `requirements-test*.txt` files own direct pins. CI installs the
+matching `requirements-test-{current,minimum,build}.lock` files with mandatory
+hashes. `tests/test_dependencies.py` fails if an input pin changes without the
+matching lock being regenerated, including Dependabot updates; regenerate and
+commit the affected locks before merging. Dependency updates must run both HA
+suites and the existing security checks.
+
+Each lock records a SHA-256 digest of its recursively expanded input requirements,
+including extras and markers. This detects input changes even when uv strips
+extras from compiled entries. The generator updates that metadata only after a
+successful compilation, rejecting inputs that changed while compilation ran.
+Each output is staged beside its destination and atomically replaced only after
+metadata validation, preserving the previous lock on compiler, metadata-write or
+publication failure. Do not update the digest by hand.
+
+The generator targets Linux x86_64 and Python 3.14.8, matching the validated
+interpreter patch level; a minor-only target would include patches older than
+HA supports. With uv 0.13.5, regenerate all locks with:
+
+```sh
+python scripts/lock_test_dependencies.py
+```
+
+Pass `current`, `minimum` or `build` to regenerate selected environments. Review
+changed transitive dependencies and hashes. Use `--upgrade` only for an
+intentional full refresh, or `--upgrade-package NAME` for a targeted update.
+The generator is included in Ruff, Bandit, coverage and Sonar analysis. Its
+subprocess exceptions are local annotations for invoking the trusted uv executable
+with an argument list and no shell. Tests cover successful metadata generation
+and preserving stale metadata after compiler failure.
+
+The build lock provides setuptools and wheel before installing source-only
+`mock-open` and `pyric`; all other packages must have wheels. The scanner's
+standalone coverage tool remains pinned and wheel-only.
+
+## Findings that need framework or protocol context
+
+Keep analyzer findings reviewable; do not change APIs or exclude source files
+just to raise a rating. In particular:
+
+- Home Assistant requires `async_setup_entry` hooks and listener `stop` methods
+  to remain awaitable even where their current body has no suspension point.
+  The `hass` argument is part of the platform setup contract.
+- `vendor.py` contains public RTSP application defaults, already documented as
+  protocol constants. The private per-camera token is still required. Renaming
+  or hiding these constants would not improve authentication.
+- `SETTING_MIRRORS` has tuple keys; unpacking an iteration yields the domain and
+  key without retrieving dictionary values. An `items()` recommendation here
+  does not apply.
+
+Review those exact findings in Sonar with this context. Keep security and
+quality gates enabled and retain regression tests for private-data filtering,
+bounded queues, cancellation, malformed frames and local/cloud isolation.

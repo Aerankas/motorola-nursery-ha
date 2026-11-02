@@ -35,19 +35,31 @@ independent pins for those packages. Shared tools live in
 `requirements-test-tools.txt`.
 
 CI tests the minimum supported HA and the version selected by
-`requirements-test.txt`. The minimum job in `.github/workflows/validate.yml`
-fixes a compatible test plugin; update that pin only when intentionally raising
-the documented minimum HA version. To run the minimum environment locally,
-create a separate virtual environment and install `requirements-test-tools.txt`
-plus the test plugin pinned in that job.
+`requirements-test.txt`. The minimum plugin pin lives in
+`requirements-test-minimum.txt`; update it only when intentionally raising the
+documented minimum HA version. Both CI environments use complete, hash-locked
+Linux x86_64 / Python 3.14 dependencies. See
+[lock maintenance](sonarqube.md#dependency-lock-maintenance) before updating pins.
+To reproduce either CI environment, create a separate virtual environment:
+
+```sh
+python -m pip install --require-hashes --only-binary=:all: -r requirements-test-build.lock
+python -m pip install --require-hashes --only-binary=:all: --no-binary=mock-open,pyric --no-build-isolation -r requirements-test-current.lock
+python -m pip check
+```
+
+Replace `current` with `minimum` for the compatibility suite. The two explicitly
+allowed source packages have no published wheels; their archives and build tools
+are hash-locked, and build isolation is disabled to prevent unpinned build-time
+downloads. Do not widen that exception without reviewing the dependency.
 
 For code changes, run the complete local validation before opening a pull request:
 
 ```sh
-.venv/bin/ruff check custom_components tests
-.venv/bin/ruff format --check custom_components tests
-.venv/bin/bandit -q -r custom_components/motorola_nursery
-.venv/bin/coverage run --source=custom_components/motorola_nursery -m pytest -q
+.venv/bin/ruff check custom_components tests scripts
+.venv/bin/ruff format --check custom_components tests scripts
+.venv/bin/bandit -q -r custom_components/motorola_nursery scripts
+.venv/bin/coverage run -m pytest -q
 .venv/bin/coverage report --fail-under=80
 ```
 

@@ -60,6 +60,7 @@ class RuntimeData:
     local_server: LocalControlServer | None = None
 
     async def async_prepare_stream(self, *, force: bool = False) -> None:
+        """Probe local video and recover account credentials with bounded retries."""
         # Existing imported entries remain fully compatible and local.
         if CONF_SESSION not in self.entry.data or self.entry.data.get(
             CONF_LOCAL_CONTROL, False
@@ -74,7 +75,7 @@ class RuntimeData:
                     self.entry.data["host"], self.credentials
                 )
                 await tunnel.close()
-            except (OSError, EOFError, TimeoutError):
+            except (OSError, EOFError):
                 if now < self.next_refresh:
                     raise HomeAssistantError("Camera connection unavailable") from None
                 # Bound cloud attempts when the actual problem is Wi-Fi/power.
@@ -86,7 +87,7 @@ class RuntimeData:
                     raise HomeAssistantError(
                         "Motorola account needs authentication"
                     ) from None
-                except (OSError, EOFError, TimeoutError, CloudError):
+                except (OSError, EOFError, CloudError):
                     raise HomeAssistantError(
                         "Unable to refresh camera credentials"
                     ) from None
@@ -98,7 +99,7 @@ class RuntimeData:
                         self.entry.data["host"], credentials
                     )
                     await tunnel.close()
-                except (OSError, EOFError, TimeoutError):
+                except (OSError, EOFError):
                     raise HomeAssistantError("Camera connection unavailable") from None
             self.next_check = time.monotonic() + 60
 
@@ -141,6 +142,53 @@ def credentials_from_entry(entry: ConfigEntry) -> Credentials:
     return credentials
 
 
+async def _async_setup_telemetry(hass, entry, runtime):
+    """Configure exactly one control transport without delaying local video."""
+    if entry.data.get(CONF_LOCAL_CONTROL, False):
+        server = hass.data.setdefault(DOMAIN, {}).setdefault(
+            "local_control_server", LocalControlServer()
+        )
+        runtime.local_server = server
+        try:
+            registration = await server.register(
+                entry.entry_id, lambda: credentials_from_data(entry.data)
+            )
+        except OSError:
+            raise ConfigEntryNotReady("Local control listener unavailable") from None
+        client = LocalTelemetryClient(registration)
+        runtime.telemetry = MotorolaTelemetryCoordinator(hass, entry, client)
+
+        def local_connection_changed(connected):
+            """Refresh recovered peers and expose disconnects without cloud fallback."""
+            if runtime.stopping:
+                return
+            if connected:
+                entry.async_create_background_task(
+                    hass,
+                    runtime.telemetry.async_request_refresh(),
+                    "Motorola local telemetry connected",
+                )
+            else:
+                runtime.telemetry.async_set_update_error(
+                    UpdateFailed("Local camera control unavailable")
+                )
+
+        registration.connection_callbacks.add(local_connection_changed)
+        runtime.events = MotorolaEventManager(
+            hass,
+            entry,
+            None,
+            lambda _entry, _context, on_event, on_connection: LocalEventListener(
+                registration, on_event, on_connection
+            ),
+        )
+    elif CONF_SESSION in entry.data:
+        context = await hass.async_add_executor_job(ssl.create_default_context)
+        client = TelemetryClient(entry.data[CONF_SESSION]["host"], context)
+        runtime.telemetry = MotorolaTelemetryCoordinator(hass, entry, client)
+        runtime.events = MotorolaEventManager(hass, entry, context)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Start locally using cached credentials; cloud access is demand-driven."""
     credentials = credentials_from_entry(entry)
@@ -166,50 +214,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await relay.start()
         runtime = RuntimeData(hass, entry, bridge, relay, credentials)
         entry.runtime_data = runtime
-        if entry.data.get(CONF_LOCAL_CONTROL, False):
-            server = hass.data.setdefault(DOMAIN, {}).setdefault(
-                "local_control_server", LocalControlServer()
-            )
-            runtime.local_server = server
-            try:
-                registration = await server.register(
-                    entry.entry_id, lambda: credentials_from_data(entry.data)
-                )
-            except OSError:
-                raise ConfigEntryNotReady(
-                    "Local control listener unavailable"
-                ) from None
-            client = LocalTelemetryClient(registration)
-            runtime.telemetry = MotorolaTelemetryCoordinator(hass, entry, client)
-
-            def local_connection_changed(connected):
-                if runtime.stopping:
-                    return
-                if connected:
-                    entry.async_create_background_task(
-                        hass,
-                        runtime.telemetry.async_request_refresh(),
-                        "Motorola local telemetry connected",
-                    )
-                else:
-                    runtime.telemetry.async_set_update_error(
-                        UpdateFailed("Local camera control unavailable")
-                    )
-
-            registration.connection_callbacks.add(local_connection_changed)
-            runtime.events = MotorolaEventManager(
-                hass,
-                entry,
-                None,
-                lambda _entry, _context, on_event, on_connection: LocalEventListener(
-                    registration, on_event, on_connection
-                ),
-            )
-        elif CONF_SESSION in entry.data:
-            context = await hass.async_add_executor_job(ssl.create_default_context)
-            client = TelemetryClient(entry.data[CONF_SESSION]["host"], context)
-            runtime.telemetry = MotorolaTelemetryCoordinator(hass, entry, client)
-            runtime.events = MotorolaEventManager(hass, entry, context)
+        await _async_setup_telemetry(hass, entry, runtime)
         async_remove_setting_mirrors(hass, entry)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         # Register the camera and delayed-discovery listeners before any cloud

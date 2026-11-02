@@ -46,7 +46,7 @@ from .const import (
 )
 from .protocol import MagicP2PTunnel
 
-NETWORK_ERRORS = (OSError, TimeoutError, EOFError)
+NETWORK_ERRORS = (OSError, EOFError)
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -278,6 +278,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_host(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Probe the selected camera before persisting account or host changes."""
         if self._selected is None or self._session is None:
             return self.async_abort(reason="login_connection_lost")
         target = self._target_entry()
@@ -309,12 +310,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "invalid_auth"
                 else:
                     _LOGGER.debug("Local camera probe accepted: source=account_setup")
-                    if target is not None:
-                        async with account_lock(self.hass, target):
-                            return self.async_update_reload_and_abort(
-                                target, data_updates=data
-                            )
-                    return self.async_create_entry(title=self._selected.name, data=data)
+                    return await self._async_save_account_camera(target, data)
         return self.async_show_form(
             step_id="host",
             errors=errors,
@@ -322,6 +318,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {vol.Required(CONF_HOST, default=previous.get(CONF_HOST, "")): str}
             ),
         )
+
+    async def _async_save_account_camera(self, target, data) -> ConfigFlowResult:
+        """Serialize updates to existing accounts after a successful local probe."""
+        if target is not None:
+            async with account_lock(self.hass, target):
+                return self.async_update_reload_and_abort(target, data_updates=data)
+        return self.async_create_entry(title=self._selected.name, data=data)
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         return await self.async_step_user()

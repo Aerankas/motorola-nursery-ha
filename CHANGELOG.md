@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Simplify control parsing, notification dispatch and transport setup while
+  preserving credentials, entity identities and LAN/cloud isolation.
+- Strengthen malformed-frame, queue-limit and input-validation regression tests.
+- Install complete hash-locked HA test environments in CI, with reviewed source
+  exceptions and pinned build tools.
+
 ## 0.8.0 — 2026-11-01
 
 - Discover controls from individual camera capabilities, write access and bounds,

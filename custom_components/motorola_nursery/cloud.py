@@ -30,7 +30,9 @@ def _response_summary(fields: list[str]) -> tuple[str, str]:
     if first.startswith("-"):
         # Only short negative numeric statuses can be exported. Positive numbers
         # may be account IDs; text may echo email addresses, codes or tokens.
-        status = first if re.fullmatch(r"-[1-9][0-9]{0,3}", first) else "other"
+        status = (
+            first if re.fullmatch(r"-[1-9]\d{0,3}", first, flags=re.ASCII) else "other"
+        )
         return "negative_status", status
     return ("numeric" if first.isdigit() else "text"), "none"
 
@@ -181,48 +183,51 @@ def parse_devices(fields: list[str]) -> list[Device]:
     result = []
     for index in range(count):
         row = fields[1 + index * 7 : 8 + index * 7]
-        owner_decimal = _field_kind(row[0]) == "decimal"
-        owner_fits = False
-        if owner_decimal:
-            # Oversized decimal strings may exceed Python's conversion cap.
-            with suppress(ValueError):
-                owner_fits = 0 <= int(row[0]) <= 0xFFFFFFFF
-        failures = []
-        if not owner_decimal:
-            failures.append("owner_id_not_decimal")
-        elif not owner_fits:
-            failures.append("owner_id_out_of_u32_range")
-        if not 3 <= len(row[4]) <= 27:
-            failures.append("magic_token_length")
-        device_length_valid = (
-            MIN_SID_DEVICE_LENGTH <= len(row[5]) <= MAX_SID_DEVICE_LENGTH
-        )
-        if not device_length_valid:
-            failures.append("device_id_length")
-        _LOGGER.debug(
-            "Account device record: index=%d model_family=%s "
-            "field_lengths=%s field_kinds=%s owner_fits_u32=%s "
-            "magic_token_length_valid=%s device_id_length_valid=%s",
-            index,
-            _model_family(row[2]),
-            tuple(map(len, row)),
-            tuple(map(_field_kind, row)),
-            owner_fits,
-            3 <= len(row[4]) <= 27,
-            device_length_valid,
-        )
-        if failures:
-            _LOGGER.debug(
-                "Account device record rejected: index=%d reasons=%s "
-                "supported_magic_token_length=3..27 supported_device_id_length=%d..%d",
-                index,
-                ",".join(failures),
-                MIN_SID_DEVICE_LENGTH,
-                MAX_SID_DEVICE_LENGTH,
-            )
-            raise DeviceListError("Invalid device credentials")
-        result.append(Device(*row))
+        result.append(_parse_device(row, index))
     return result
+
+
+def _parse_device(row: list[str], index: int) -> Device:
+    """Validate a single record without logging its private values."""
+    owner_decimal = _field_kind(row[0]) == "decimal"
+    owner_fits = False
+    if owner_decimal:
+        # Oversized decimal strings may exceed Python's conversion cap.
+        with suppress(ValueError):
+            owner_fits = 0 <= int(row[0]) <= 0xFFFFFFFF
+    failures = []
+    if not owner_decimal:
+        failures.append("owner_id_not_decimal")
+    elif not owner_fits:
+        failures.append("owner_id_out_of_u32_range")
+    if not 3 <= len(row[4]) <= 27:
+        failures.append("magic_token_length")
+    device_length_valid = MIN_SID_DEVICE_LENGTH <= len(row[5]) <= MAX_SID_DEVICE_LENGTH
+    if not device_length_valid:
+        failures.append("device_id_length")
+    _LOGGER.debug(
+        "Account device record: index=%d model_family=%s "
+        "field_lengths=%s field_kinds=%s owner_fits_u32=%s "
+        "magic_token_length_valid=%s device_id_length_valid=%s",
+        index,
+        _model_family(row[2]),
+        tuple(map(len, row)),
+        tuple(map(_field_kind, row)),
+        owner_fits,
+        3 <= len(row[4]) <= 27,
+        device_length_valid,
+    )
+    if failures:
+        _LOGGER.debug(
+            "Account device record rejected: index=%d reasons=%s "
+            "supported_magic_token_length=3..27 supported_device_id_length=%d..%d",
+            index,
+            ",".join(failures),
+            MIN_SID_DEVICE_LENGTH,
+            MAX_SID_DEVICE_LENGTH,
+        )
+        raise DeviceListError("Invalid device credentials")
+    return Device(*row)
 
 
 class CloudClient:
@@ -238,6 +243,7 @@ class CloudClient:
         self._lock = asyncio.Lock()
 
     async def connect(self) -> None:
+        """Open one bounded TLS connection to the validated vendor endpoint."""
         if self._writer is not None:
             raise RuntimeError("Client is already connected")
         route = "bootstrap" if self.host == DEFAULT_HOST else "vendor_routed"
@@ -254,7 +260,7 @@ class CloudClient:
                     server_hostname=self.host,
                     limit=MAX_LINE,
                 )
-        except (OSError, TimeoutError) as err:
+        except OSError as err:
             _LOGGER.debug(
                 "Account cloud connect failed: route=%s category=%s elapsed=%.3fs",
                 route,
@@ -270,6 +276,7 @@ class CloudClient:
         self._reader_task = asyncio.create_task(self._receive(reader))
 
     async def _receive(self, reader: asyncio.StreamReader) -> None:
+        """Validate frames and report queue failure without exposing payloads."""
         try:
             while True:
                 raw = await reader.readline()
@@ -277,29 +284,32 @@ class CloudClient:
                     raise ConnectionError("Cloud connection closed")
                 if len(raw) > MAX_LINE or not raw.endswith(b"\n"):
                     raise CloudError("Invalid protocol frame")
-                parts = raw.decode("ascii").split()
-                if parts == ["ping"]:
-                    if self._writer is not None:
-                        self._writer.write(b"pong\n")
-                        await self._writer.drain()
-                elif parts:
-                    self._messages.put_nowait(parts)
+                await self._dispatch_message(raw.decode("ascii").split())
         except asyncio.CancelledError:
             raise
         except (OSError, ValueError, CloudError, asyncio.QueueFull) as err:
-            category = (
-                "protocol_frame"
-                if isinstance(err, (ValueError, CloudError))
-                else "queue_full"
-                if isinstance(err, asyncio.QueueFull)
-                else _network_category(err)
-            )
+            if isinstance(err, (ValueError, CloudError)):
+                category = "protocol_frame"
+            elif isinstance(err, asyncio.QueueFull):
+                category = "queue_full"
+            else:
+                category = _network_category(err)
             _LOGGER.debug("Account cloud reader stopped: category=%s", category)
             if self._messages.full():
                 self._messages.get_nowait()
             self._messages.put_nowait(ConnectionError("Cloud connection closed"))
 
+    async def _dispatch_message(self, parts: list[str]) -> None:
+        """Answer keepalives and queue application replies within the size limit."""
+        if parts == ["ping"]:
+            if self._writer is not None:
+                self._writer.write(b"pong\n")
+                await self._writer.drain()
+        elif parts:
+            self._messages.put_nowait(parts)
+
     async def close(self) -> None:
+        """Cancel the reader and bound the wait for TLS socket shutdown."""
         if self._reader_task is not None:
             self._reader_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -307,12 +317,13 @@ class CloudClient:
             self._reader_task = None
         if self._writer is not None:
             self._writer.close()
-            with suppress(OSError, TimeoutError):
+            with suppress(OSError):
                 async with asyncio.timeout(5):
                     await self._writer.wait_closed()
             self._writer = None
 
     async def _exchange(self, command: str, *fields: str) -> list[str]:
+        """Send one validated command and skip a bounded number of unrelated replies."""
         if self._writer is None:
             raise ConnectionError("Client is not connected")
         message = " ".join([atom(command), *(atom(value) for value in fields)]) + "\n"
@@ -351,7 +362,7 @@ class CloudClient:
                     operation,
                 )
                 raise CloudError("Too many unrelated protocol frames")
-        except (OSError, TimeoutError, EOFError) as err:
+        except (OSError, EOFError) as err:
             _LOGGER.debug(
                 "Account request failed: operation=%s category=%s elapsed=%.3fs",
                 operation,
@@ -367,28 +378,7 @@ class CloudClient:
             for redirects in range(MAX_OTP_REDIRECTS + 1):
                 fields = await self._exchange("v3_otp", login_uuid, "email", email, "6")
                 if len(fields) == 2 and fields[0] == "-6":
-                    try:
-                        host = vendor_host(fields[1])
-                    except CloudError:
-                        _LOGGER.debug(
-                            "Account code request failed: "
-                            "reason=unsupported_routing_host"
-                        )
-                        raise
-                    if host in visited or redirects == MAX_OTP_REDIRECTS:
-                        _LOGGER.debug(
-                            "Account code request failed: reason=routing_loop_or_limit"
-                        )
-                        raise CloudError("Email code routing did not complete")
-                    visited.add(host)
-                    _LOGGER.debug(
-                        "Account code request routing: redirect=%d", redirects + 1
-                    )
-                    await self.close()
-                    # Discard old-server frames/EOF before opening the new route.
-                    self._messages = asyncio.Queue(64)
-                    self.host = host
-                    await self.connect()
+                    await self._redirect_otp(fields[1], visited, redirects)
                     continue
                 if fields and fields[0].startswith("-"):
                     _LOGGER.debug("Account code request failed: reason=server_rejected")
@@ -412,10 +402,33 @@ class CloudClient:
                 return Challenge(fields[0], host)
             raise CloudError("Email code routing did not complete")
 
+    async def _redirect_otp(
+        self, value: str, visited: set[str], redirects: int
+    ) -> None:
+        """Follow only a new vendor route, replacing all old connection state."""
+        try:
+            host = vendor_host(value)
+        except CloudError:
+            _LOGGER.debug(
+                "Account code request failed: reason=unsupported_routing_host"
+            )
+            raise
+        if host in visited or redirects == MAX_OTP_REDIRECTS:
+            _LOGGER.debug("Account code request failed: reason=routing_loop_or_limit")
+            raise CloudError("Email code routing did not complete")
+        visited.add(host)
+        _LOGGER.debug("Account code request routing: redirect=%d", redirects + 1)
+        await self.close()
+        # Discard old-server frames/EOF before opening the new route.
+        self._messages = asyncio.Queue(64)
+        self.host = host
+        await self.connect()
+
     async def submit_code(
         self, challenge: Challenge, login_uuid: str, email: str, code: str
     ) -> Session:
-        if not re.fullmatch(r"[0-9]{6}", code):
+        """Validate an ASCII email code before exchanging it for a saved session."""
+        if not re.fullmatch(r"\d{6}", code, flags=re.ASCII):
             _LOGGER.debug("Account code submission failed: reason=invalid_code_format")
             raise ValueError("Expected a six-digit email code")
         if challenge.host != self.host:

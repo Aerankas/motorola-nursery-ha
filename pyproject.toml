@@ -14,4 +14,4 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.coverage.run]
 branch = true
 relative_files = true
-source = ["custom_components/motorola_nursery"]
+source = ["custom_components/motorola_nursery", "scripts"]

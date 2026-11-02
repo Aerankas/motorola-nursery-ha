@@ -163,27 +163,34 @@ def parse_values(
     except (ValueError, IndexError):
         raise TelemetryError("Invalid sensor response") from None
 
-    result: dict[str, int | str | None] = {}
-    for key, value in raw.items():
-        cap = capabilities[key]
-        if cap.kind == "str":
-            if key == "playing":
-                result[key] = (
-                    value
-                    if value == "(none)" or SONG_PATTERN.fullmatch(value)
-                    else None
-                )
-            else:
-                result[key] = (
-                    value if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value) else None
-                )
-            continue
-        try:
-            number = int(value)
-            result[key] = number if cap.minimum <= number <= cap.maximum else None
-        except ValueError:
-            result[key] = None
-    return result
+    return {
+        key: _parse_value(key, value, capabilities[key]) for key, value in raw.items()
+    }
+
+
+def _parse_value(key: str, value: str, cap: Capability) -> int | str | None:
+    """Validate one reading independently of the rest of the frame."""
+    if cap.kind == "str":
+        if key == "playing":
+            return value if value == "(none)" or SONG_PATTERN.fullmatch(value) else None
+        return value if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value) else None
+    try:
+        number = int(value)
+        return number if cap.minimum <= number <= cap.maximum else None
+    except ValueError:
+        return None
+
+
+def _matches_response(parts, expected, field, value):
+    """Match the operation and optional field/value without indexing short frames."""
+    if not parts or parts[0] != expected:
+        return False
+    if field is None:
+        return True
+    index = 2 if expected == "get" else 1
+    return parts[index : index + 1] == [field] and (
+        value is None or parts[index + 1 : index + 2] == [value]
+    )
 
 
 class TelemetryClient:
@@ -210,6 +217,7 @@ class TelemetryClient:
         field: str | None = None,
         value: str | None = None,
     ) -> list[str]:
+        """Match replies while servicing keepalives and bounding skipped frames."""
         if message is not None:
             await self._send(writer, message)
         for _ in range(64):
@@ -221,18 +229,13 @@ class TelemetryClient:
                 await self._send(writer, "pong")
             elif parts == ["pong"]:
                 await self._send(writer, "pang")
-            elif parts and parts[0] == expected:
-                if field is None:
-                    return parts
-                index = 2 if expected == "get" else 1
-                if parts[index : index + 1] == [field] and (
-                    value is None or parts[index + 1 : index + 2] == [value]
-                ):
-                    return parts
+            elif _matches_response(parts, expected, field, value):
+                return parts
         raise TelemetryError("Too many unrelated control messages")
 
     @asynccontextmanager
     async def _session(self, credentials: Credentials):
+        """Authenticate a bounded TLS control session and always close its writer."""
         owner = atom(str(credentials.sid_user_id))
         token = atom(credentials.magic_token.decode("ascii"))
         writer: asyncio.StreamWriter | None = None
@@ -253,12 +256,12 @@ class TelemetryClient:
                 yield reader, writer
         except TelemetryError:
             raise
-        except (OSError, EOFError, ValueError, TimeoutError):
+        except (OSError, EOFError, ValueError):
             raise TelemetryError("Unable to communicate with camera") from None
         finally:
             if writer is not None:
                 writer.close()
-                with suppress(OSError, TimeoutError):
+                with suppress(OSError):
                     async with asyncio.timeout(2):
                         await writer.wait_closed()
 

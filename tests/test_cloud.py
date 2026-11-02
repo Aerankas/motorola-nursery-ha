@@ -235,12 +235,14 @@ async def test_routing_and_later_authentication_failures(caplog):
 
 @pytest.mark.asyncio
 async def test_session_rejection_contains_no_payload():
+    """Rejected sessions must not persist or disclose the response payload."""
     client = CloudClient(ssl.create_default_context())
     from unittest.mock import AsyncMock
 
     client._exchange = AsyncMock(return_value=["-10"])
+    session = Session("123456", "private-token", "1234567", client.host)
     with pytest.raises(AuthenticationError, match="Session rejected"):
-        await client.resume(Session("123456", "private-token", "1234567", client.host))
+        await client.resume(session)
     assert client.session is None
 
 
@@ -297,7 +299,8 @@ async def test_otp_redirect_reconnects_and_preserves_identity(socket_enabled, ca
             challenge = await client.request_code("PRIVATEUUID", "private@example.test")
         assert challenge.host == client.host == "other.moto.5gencare.com"
         assert hosts == ["9.moto.5gencare.com", "other.moto.5gencare.com"]
-        assert len(observed) == 2 and observed[0] == observed[1]
+        assert len(observed) == 2
+        assert observed[0] == observed[1]
         assert "routing: redirect=1" in caplog.text
         assert "code request accepted" in caplog.text
         for secret in ("PRIVATEUUID", "private@example.test", "654321", challenge.host):
@@ -419,7 +422,8 @@ def test_device_list_record_logs_failed_rule_without_values(
         parse_devices(["1", *row])
     assert "declared_count=1 received_fields=8 expected_fields=8" in caplog.text
     assert "model_family=VM85" in caplog.text
-    assert "field_lengths=" in caplog.text and "field_kinds=" in caplog.text
+    assert "field_lengths=" in caplog.text
+    assert "field_kinds=" in caplog.text
     assert f"reasons={reason}" in caplog.text
     for secret in (
         "654321",
@@ -482,8 +486,43 @@ def test_device_list_existing_credential_boundaries_remain_supported(
         "-1",
     ]
     devices = parse_devices(["1", *row])
-    assert len(devices) == 1 and devices[0].model == model
+    assert len(devices) == 1
+    assert devices[0].model == model
     assert devices[0].sid_device == row[5]
     assert "owner_fits_u32=True" in caplog.text
     assert "magic_token_length_valid=True device_id_length_valid=True" in caplog.text
     assert "private" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "payload", [b"\xff\n", b"incomplete", b"reply private\n" * 65, b""]
+)
+async def test_reader_failure_keeps_a_bounded_queue_and_safe_error(payload, caplog):
+    """Malformed or excessive cloud frames must end with a sanitized failure."""
+    client = CloudClient(ssl.create_default_context())
+    reader = asyncio.StreamReader()
+    reader.feed_data(payload)
+    reader.feed_eof()
+    caplog.set_level(logging.DEBUG, logger="custom_components.motorola_nursery")
+    async with asyncio.timeout(1):
+        await client._receive(reader)
+    assert 1 <= client._messages.qsize() <= 64
+    messages = []
+    while not client._messages.empty():
+        messages.append(client._messages.get_nowait())
+    assert isinstance(messages[-1], ConnectionError)
+    assert str(messages[-1]) == "Cloud connection closed"
+    assert "private" not in caplog.text
+
+
+@pytest.mark.parametrize("code", ["１２３４５６", "١٢٣٤٥٦", "12345", "123456\n"])
+async def test_email_code_requires_exactly_six_ascii_digits_without_network(code):
+    """Invalid email codes must be rejected before any network operation."""
+    from custom_components.motorola_nursery.cloud import Challenge
+
+    client = CloudClient(ssl.create_default_context())
+    client._exchange = AsyncMock()
+    challenge = Challenge("123456", client.host)
+    with pytest.raises(ValueError, match="six-digit"):
+        await client.submit_code(challenge, "SYNTHETICUUID", "owner@example.test", code)
+    client._exchange.assert_not_called()

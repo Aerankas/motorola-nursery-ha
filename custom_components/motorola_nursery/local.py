@@ -22,6 +22,7 @@ LOCAL_PORT = 2278
 TIMEOUT = 20
 INITIALIZATION_TIMEOUT = 30
 SHUTDOWN_TIMEOUT = 5
+DISCONNECTED = "Local control disconnected"
 
 
 @dataclass(repr=False)
@@ -50,14 +51,16 @@ class LocalPeer:
         self.closed = False
 
     async def send(self, data: bytes) -> None:
+        """Reject sends after closure before touching the encrypted connection."""
         if self.closed:
-            raise EOFError("Local control disconnected")
+            raise EOFError(DISCONNECTED)
         await self.connection.send(data)
 
     async def readline(self) -> bytes:
+        """Deliver queued replies or propagate the peer shutdown sentinel."""
         line = await self.responses.get()
         if line is None:
-            raise EOFError("Local control disconnected")
+            raise EOFError(DISCONNECTED)
         return line
 
     def close(self) -> None:
@@ -99,30 +102,34 @@ class LocalPeer:
         elif parts[0] == "pong":
             return
         elif parts[0] == "notify":
-            credentials = self.registration.credentials()
-            # Camera-originated notifications may append an opaque upload hint.
-            # The app-facing channel uses four fields. Never expose this hint.
-            notification = parts
-            if len(parts) == 5 and 1 <= len(parts[4]) <= 1024:
-                notification = parts[:4]
-            event_type = parse_notification(
-                notification, credentials.magic_token.decode("ascii")
-            )
-            if len(notification) == 4 and hmac.compare_digest(
-                notification[1].encode(), credentials.magic_token
-            ):
-                await self.send(b"notify 1 1\n")
-            if event_type is not None:
-                fingerprint = hashlib.sha256(
-                    (parts[2] + "\0" + parts[3]).encode()
-                ).digest()
-                if fingerprint not in self.registration.seen:
-                    self.registration.seen.append(fingerprint)
-                    event = CameraEvent(event_type, datetime.now(UTC))
-                    for callback in tuple(self.registration.event_callbacks):
-                        callback(event)
+            await self._handle_notification(parts)
         elif self.request_pending and parts[0] in ("caplist", "get", "set"):
             self.responses.put_nowait(line)
+
+    async def _handle_notification(self, parts: list[str]) -> None:
+        """Acknowledge authenticated events and deduplicate them across reconnects."""
+        credentials = self.registration.credentials()
+        # Camera-originated notifications may append an opaque upload hint.
+        # The app-facing channel uses four fields. Never expose this hint.
+        notification = parts
+        if len(parts) == 5 and 1 <= len(parts[4]) <= 1024:
+            notification = parts[:4]
+        event_type = parse_notification(
+            notification, credentials.magic_token.decode("ascii")
+        )
+        if len(notification) == 4 and hmac.compare_digest(
+            notification[1].encode(), credentials.magic_token
+        ):
+            await self.send(b"notify 1 1\n")
+        if event_type is None:
+            return
+        fingerprint = hashlib.sha256((parts[2] + "\0" + parts[3]).encode()).digest()
+        if fingerprint in self.registration.seen:
+            return
+        self.registration.seen.append(fingerprint)
+        event = CameraEvent(event_type, datetime.now(UTC))
+        for callback in tuple(self.registration.event_callbacks):
+            callback(event)
 
     async def _heartbeat(self) -> None:
         while True:
@@ -209,6 +216,7 @@ class LocalControlServer:
         return matches[0]
 
     async def _handle(self, reader, writer) -> None:
+        """Authenticate one camera and retire only its own active registration."""
         registration = peer = None
         stage = "handshake"
         try:
@@ -253,7 +261,6 @@ class LocalControlServer:
             OSError,
             EOFError,
             ValueError,
-            TimeoutError,
             RuntimeError,
             asyncio.QueueFull,
         ) as error:
@@ -266,7 +273,7 @@ class LocalControlServer:
             if peer is not None and not peer.closed:
                 peer.close()
             writer.close()
-            with suppress(OSError, TimeoutError):
+            with suppress(OSError):
                 async with asyncio.timeout(2):
                     await writer.wait_closed()
             if registration is not None and registration.peer is peer:
@@ -310,6 +317,7 @@ class LocalTelemetryClient(TelemetryClient):
 
     @asynccontextmanager
     async def _session(self, credentials):
+        """Serialize local commands and discard sessions with uncertain framing."""
         peer = None
         try:
             async with asyncio.timeout(TIMEOUT):
@@ -318,7 +326,7 @@ class LocalTelemetryClient(TelemetryClient):
             async with asyncio.timeout(2 * TIMEOUT):
                 peer = self.registration.peer
                 if peer is None or peer.closed:
-                    raise EOFError("Local control disconnected")
+                    raise EOFError(DISCONNECTED)
                 async with peer.command_lock:
                     if peer is not self._last_peer:
                         self._capabilities = None
@@ -338,7 +346,7 @@ class LocalTelemetryClient(TelemetryClient):
             if peer:
                 peer.close()
             raise
-        except (OSError, EOFError, TimeoutError, ValueError, TelemetryError):
+        except (OSError, EOFError, ValueError, TelemetryError):
             if peer:
                 peer.close()
             raise TelemetryError("Local camera control unavailable") from None

@@ -1,0 +1,3 @@
+# Build tools for the two hash-verified source-only HA test dependencies.
+setuptools==84.2.1
+wheel==0.48.0

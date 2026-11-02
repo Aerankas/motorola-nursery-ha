@@ -1,0 +1,3 @@
+# Minimum supported HA 2026.9.3 and compatible test dependencies.
+-r requirements-test-tools.txt
+pytest-homeassistant-custom-component==0.13.366

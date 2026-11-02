@@ -20,7 +20,8 @@ MODULE_PATH = (
     Path(__file__).parents[1] / "custom_components" / "motorola_nursery" / "protocol.py"
 )
 SPEC = importlib.util.spec_from_file_location("motorola_protocol", MODULE_PATH)
-assert SPEC is not None and SPEC.loader is not None
+assert SPEC is not None
+assert SPEC.loader is not None
 protocol = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = protocol
 SPEC.loader.exec_module(protocol)
@@ -163,7 +164,8 @@ async def test_local_handshake_fragmented_success(
     assert await tunnel.receive() == plaintext
     assert "received_bytes=10 expected_bytes=10" in caplog.text
     assert "Local tunnel authenticated" in caplog.text
-    assert "private" not in caplog.text and sid.decode() not in caplog.text
+    assert "private" not in caplog.text
+    assert sid.decode() not in caplog.text
     writer.close.assert_not_called()
     await tunnel.close()
 
@@ -261,7 +263,6 @@ async def test_camera_waits_for_rtsp_after_ack(monkeypatch, long_ack):
                 if not chunk:
                     raise EOFError("Client closed before RTSP")
                 plain += decoder.decode(chunk)
-            assert plain == request
             # Delay the long suffix until after RTSP, splitting it byte by byte.
             if long_ack:
                 for value in b" " + handshake.split()[4] + b"\n":
@@ -270,7 +271,7 @@ async def test_camera_waits_for_rtsp_after_ack(monkeypatch, long_ack):
                     await asyncio.sleep(0)
             writer.write(protocol.MagicCipher(credentials.magic_token).encode(response))
             await writer.drain()
-            finished.set_result(None)
+            finished.set_result(plain)
         except Exception as err:
             finished.set_exception(err)
         finally:
@@ -287,7 +288,7 @@ async def test_camera_waits_for_rtsp_after_ack(monkeypatch, long_ack):
         await tunnel.send(request)
         assert await asyncio.wait_for(tunnel.receive(), 1) == response
         assert await tunnel.receive() == b""
-        await asyncio.wait_for(finished, 1)
+        assert await asyncio.wait_for(finished, 1) == request
     finally:
         if tunnel:
             await tunnel.close()
@@ -337,11 +338,13 @@ async def test_first_response_timeout(monkeypatch, caplog, local_credentials, st
     )
     tunnel = await protocol.MagicP2PTunnel.connect("private-host", local_credentials)
     await tunnel.send(b"OPTIONS rtsp://camera/ RTSP/1.0\r\n\r\n")
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(tunnel.receive(), 1)
+    async with asyncio.timeout(1):
+        with pytest.raises(TimeoutError):
+            await tunnel.receive()
     writer.close.assert_called_once()
     assert "stage=first_response category=timeout" in caplog.text
-    assert "private" not in caplog.text and sid.decode() not in caplog.text
+    assert "private" not in caplog.text
+    assert sid.decode() not in caplog.text
     await tunnel.close()
 
 
@@ -393,7 +396,8 @@ def test_sid_matches_native_app_vectors(vector) -> None:
     expected = vector["expected_sid"].encode()
     assert protocol.generate_sid(credentials) == expected
     request, sid = protocol.build_handshake(credentials)
-    assert sid == expected and expected in request
+    assert sid == expected
+    assert expected in request
 
 
 @pytest.mark.parametrize("device", [b"ab", b"x" * 31])
@@ -542,7 +546,8 @@ async def test_transforms_run_off_loop_and_preserve_chunk_order(direction) -> No
         second = asyncio.create_task(transfer(chunks[1]))
         await asyncio.sleep(0)
         assert len(calls) == 1
-        assert not first.done() and not second.done()
+        assert not first.done()
+        assert not second.done()
         # Full duplex still works while one direction's worker is blocked.
         if direction == "send":
             assert await asyncio.wait_for(tunnel.receive(), 2) == chunks[0]

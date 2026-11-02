@@ -19,7 +19,8 @@ MODULE_PATH = (
     / "transcoder.py"
 )
 SPEC = importlib.util.spec_from_file_location("motorola_transcoder", MODULE_PATH)
-assert SPEC is not None and SPEC.loader is not None
+assert SPEC is not None
+assert SPEC.loader is not None
 transcoder = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = transcoder
 SPEC.loader.exec_module(transcoder)

@@ -332,7 +332,7 @@ class MagicP2PTunnel:
         finally:
             if writer is not None and not connected:
                 writer.close()
-                with suppress(OSError, TimeoutError):
+                with suppress(OSError):
                     async with asyncio.timeout(CONNECT_TIMEOUT):
                         await writer.wait_closed()
 

@@ -120,8 +120,10 @@ async def test_local_probe_failure_logs_context_and_allows_retry(
     assert result["step_id"] == step
     assert result["errors"] == {"base": "cannot_connect"}
     assert entry.data == original
-    assert flow._session == SESSION and flow._selected == DEVICE
-    assert "private" not in caplog.text and "192.0.2" not in caplog.text
+    assert flow._session == SESSION
+    assert flow._selected == DEVICE
+    assert "private" not in caplog.text
+    assert "192.0.2" not in caplog.text
 
 
 @pytest.mark.asyncio

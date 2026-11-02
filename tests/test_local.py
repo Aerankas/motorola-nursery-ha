@@ -128,12 +128,14 @@ async def test_local_read_events_and_reconnect(socket_enabled):
 async def test_unknown_camera_is_rejected_without_secret_logs(
     socket_enabled, caplog, line
 ):
+    """Unknown identities must disconnect without logging credentials."""
     server = LocalControlServer(0)
     await server.register("camera-one", lambda: CREDENTIALS)
     try:
         connection = await camera(server.port, line)
-        with pytest.raises(EOFError):
-            await asyncio.wait_for(connection.readline(), 1)
+        async with asyncio.timeout(1):
+            with pytest.raises(EOFError):
+                await connection.readline()
         connection.close()
         await connection.writer.wait_closed()
         assert "private-wrong-token" not in caplog.text
@@ -168,6 +170,7 @@ async def test_missing_camera_never_falls_back_to_cloud():
 
 
 async def test_cancelled_getter_closes_socket_to_discard_late_responses(socket_enabled):
+    """Cancelled reads must close the peer so late replies cannot satisfy new reads."""
     server = LocalControlServer(0)
     registration = await server.register("one", lambda: CREDENTIALS)
     connection = await connected(server.port)
@@ -178,8 +181,9 @@ async def test_cancelled_getter_closes_socket_to_discard_late_responses(socket_e
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        with pytest.raises(EOFError):
-            await asyncio.wait_for(connection.readline(), 1)
+        async with asyncio.timeout(1):
+            with pytest.raises(EOFError):
+                await connection.readline()
     finally:
         connection.close()
         await connection.writer.wait_closed()
@@ -234,6 +238,7 @@ async def test_late_connection_gets_full_command_deadline():
 
 
 async def test_malformed_reply_invalidates_persistent_session(socket_enabled):
+    """Malformed control frames must retire the shared persistent session."""
     server = LocalControlServer(0)
     registration = await server.register("one", lambda: CREDENTIALS)
     connection = await connected(server.port)
@@ -244,8 +249,9 @@ async def test_malformed_reply_invalidates_persistent_session(socket_enabled):
         await connection.send(b"caplist invalid\n")
         with pytest.raises(TelemetryError):
             await task
-        with pytest.raises(EOFError):
-            await asyncio.wait_for(connection.readline(), 1)
+        async with asyncio.timeout(1):
+            with pytest.raises(EOFError):
+                await connection.readline()
     finally:
         connection.close()
         await connection.writer.wait_closed()
@@ -285,6 +291,7 @@ async def test_setup_ack_required_before_getters(socket_enabled):
 async def test_missing_or_rejected_setup_never_becomes_ready(
     socket_enabled, acknowledgement
 ):
+    """Only a complete successful initialization may publish a ready peer."""
     server = LocalControlServer(0)
     registration = await server.register("one", lambda: CREDENTIALS)
     try:
@@ -294,8 +301,9 @@ async def test_missing_or_rejected_setup_never_becomes_ready(
             connection = await connected(server.port, acknowledge=False)
             if acknowledgement is not None:
                 await connection.send(acknowledgement)
-            with pytest.raises(EOFError):
-                await asyncio.wait_for(connection.readline(), 1)
+            async with asyncio.timeout(1):
+                with pytest.raises(EOFError):
+                    await connection.readline()
             assert not registration.ready.is_set()
             connection.close()
             await connection.writer.wait_closed()
@@ -319,6 +327,7 @@ async def test_shutdown_aborts_stalled_transports_within_deadline():
 
 @pytest.mark.parametrize("ambiguous", [False, True])
 async def test_multiple_entries_require_unique_registration(socket_enabled, ambiguous):
+    """Camera identity must select exactly one registration across entries."""
     second_credentials = replace(
         CREDENTIALS,
         sid_device=b"second-device",
@@ -331,8 +340,9 @@ async def test_multiple_entries_require_unique_registration(socket_enabled, ambi
     try:
         if ambiguous:
             connection = await camera(server.port)
-            with pytest.raises(EOFError):
-                await asyncio.wait_for(connection.readline(), 1)
+            async with asyncio.timeout(1):
+                with pytest.raises(EOFError):
+                    await connection.readline()
             assert first.peer is None
             assert not first.ready.is_set()
         else:
@@ -484,7 +494,8 @@ async def test_local_settings_playlist_playback_and_cache_reconnect(
                     await client.async_play(CREDENTIALS, song)
                     assert client._songs == (song,)
                 data = await client.async_read(CREDENTIALS)
-                assert len(data.capabilities) == 7 and len(data.values) == 5
+                assert len(data.capabilities) == 7
+                assert len(data.values) == 5
                 assert await client.async_list_songs(CREDENTIALS) == (song,)
                 assert await client.async_list_songs(CREDENTIALS) == (song,)
                 assert await client.async_set(CREDENTIALS, "video_brightness", 2) == 2
@@ -524,13 +535,15 @@ async def test_local_settings_playlist_playback_and_cache_reconnect(
     ],
 )
 async def test_missing_local_controls_never_fall_back_to_cloud(method, args):
+    """Every local control operation must fail locally when its peer is absent."""
     client = LocalTelemetryClient(Registration(lambda: CREDENTIALS))
+    control = getattr(client, method)
     with (
         patch("custom_components.motorola_nursery.local.TIMEOUT", 0.01),
         patch("asyncio.open_connection", side_effect=AssertionError("Cloud forbidden")),
         pytest.raises(TelemetryError, match="Local camera"),
     ):
-        await getattr(client, method)(CREDENTIALS, *args)
+        await control(CREDENTIALS, *args)
 
 
 @pytest.mark.parametrize("payload", [b"", b"Song.mp3,Song.mp3", b"../private.mp3"])
@@ -573,12 +586,14 @@ async def test_invalid_complete_playlist_preserves_readings_events_and_retry(
             ) as error:
                 await client.async_list_songs(CREDENTIALS)
             assert "private" not in str(error.value)
-            assert registration.peer is peer and not peer.closed
+            assert registration.peer is peer
+            assert not peer.closed
             assert (await client.async_read(CREDENTIALS)).values == {"wifi_signal": 72}
             assert await client.async_list_songs(CREDENTIALS) == ("Song.mp3",)
         await task
         assert [event.event_type for event in events] == ["motion"]
-        assert registration.ready.is_set() and registration.peer is peer
+        assert registration.ready.is_set()
+        assert registration.peer is peer
     finally:
         connection.close()
         await connection.writer.wait_closed()
@@ -617,3 +632,31 @@ async def test_incomplete_playlist_response_still_closes_shared_peer(socket_enab
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         await server.unregister("playlist")
+
+
+async def test_response_queue_overflow_is_handled_and_releases_registration(
+    socket_enabled,
+):
+    """A flooding authenticated peer disconnects without an escaped task exception."""
+    server = LocalControlServer(0)
+    registration = await server.register("flood", lambda: CREDENTIALS)
+    connection = await connected(server.port)
+    try:
+        async with asyncio.timeout(1):
+            await registration.ready.wait()
+        peer = registration.peer
+        assert peer is not None
+        handler = next(iter(server._tasks))
+        peer.request_pending = True
+        await connection.send(b"get 1 wifi_signal 94\n" * 65)
+        async with asyncio.timeout(1):
+            await handler
+        assert peer.closed
+        assert registration.peer is None
+        assert not registration.ready.is_set()
+        assert peer.responses.qsize() == 1
+        assert peer.responses.get_nowait() is None
+    finally:
+        connection.close()
+        await connection.writer.wait_closed()
+        await server.unregister("flood")
