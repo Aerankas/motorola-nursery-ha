@@ -74,10 +74,10 @@ recovery, and unload closes clients, background tasks and FFmpeg processes.
 
 ## Dependency pull requests
 
-Dependabot updates for pip and GitHub Actions are eligible for squash auto-merge,
-including major updates. The privileged `dependabot-automerge.yml` workflow only
-enables GitHub's native auto-merge for non-draft Dependabot PRs originating in this
-repository; it never checks out or executes PR code.
+Dependabot checks pip and GitHub Actions weekly through `.github/dependabot.yml`.
+Pip updates share one group, and `github/codeql-action` updates share another;
+other GitHub Actions updates open individual PRs. Maintainers review and merge
+these PRs manually; no workflow enables auto-merge for dependency updates.
 
 The `Protect main` repository ruleset requires an up-to-date branch, passing HACS,
 Hassfest, both HA test environments, both CodeQL analyses, the CodeQL result and
@@ -85,7 +85,7 @@ CodeRabbit, resolved review conversations, and one approving review. CodeRabbit
 is configured to review Dependabot PRs and automatically approve after its feedback
 is resolved and the latest commit is reviewed. Missing or failing required checks
 block merging. There are no bypass actors. These merge requirements apply to all
-PRs; automatic enabling of auto-merge is limited to Dependabot.
+PRs, including dependency updates.
 
 The required check names and application bindings live in GitHub repository
 settings. Keep them aligned when adding or renaming CI jobs. If a dependency PR
