@@ -1,6 +1,6 @@
 # Troubleshooting account setup
 
-[Documentation index](README.md)
+[Documentation index](../README.md)
 
 ## What an email-code request error means
 
@@ -78,7 +78,7 @@ See Home Assistant's [debug logging and diagnostics guide](https://www.home-assi
 If logs show a completed `v3_loginset` followed by a `v3_dlist` validation
 failure, the OTP authentication has succeeded and the server has responded.
 An unsupported camera-list response is different from a network outage.
-Version 0.5.4 distinguishes these cases in the setup error message.
+The setup error distinguishes these cases.
 
 With integration debug enabled, share the reviewed `Account device list framing`,
 `Account device list rejected`, `Account device record` and
@@ -90,9 +90,8 @@ same log collection procedure above, then restore the log level.
 For example, `declared_count=1 received_fields=8 expected_fields=8` confirms the
 expected seven-field layout for one camera; `reasons=device_id_length` then
 isolates the unsupported field. This does not establish why its value differs
-or prove that the whole camera protocol is incompatible. Version 0.5.5 accepts
-SID device values up to 30 bytes after comparison with the Android app's native
-v1 implementation; update and restart HA before retrying a 30-byte rejection.
+or prove that the whole camera protocol is incompatible. The current account parser accepts SID device values up to 30 bytes; update
+and restart HA before reporting a rejection from an older installation.
 
 If camera selection now succeeds, enter the camera's LAN address from a network
 that Home Assistant can reach. Report whether setup accepts that address, then
@@ -102,11 +101,9 @@ firmware if the app displays it, but do not send credentials or serial numbers.
 
 ## Camera listed, but local connection fails
 
-Version `0.5.6` includes local connection diagnostics and accepts the short
-acknowledgement confirmed on VM85CONNECT. If an older version reports a
-10/90-byte incomplete reply, update and restart HA before retrying. Enable integration debug
-logging as described above, then submit the camera address once. If the setup
-form is still open, retry that step without requesting another email code.
+Enable integration debug logging as described above, then submit the camera
+address once. If the setup form is still open, retry that step without requesting
+another email code.
 Share the reviewed `Local camera probe` and `Local tunnel` lines from that
 attempt, along with the integration version and camera firmware version.
 
@@ -126,9 +123,7 @@ The existing network error can represent several different stages:
 count and prefix shape (`expected_prefix`, `negative_status`, `other`, `empty`).
 The expected acknowledgement is ten bytes. After stream data arrives,
 `Local tunnel acknowledgement suffix` reports `sid_echo` for the extended reply
-or `none` for the short reply. Betas also logged `sid_matches=not_present` and a
-delimiter category; these fields were removed in 0.5.6 because the ten-byte ACK
-contains no SID echo or delimiter. Unknown reply contents and numeric statuses
+or `none` for the short reply. Unknown reply contents and numeric statuses
 are not printed. A short error reply may remain pending until EOF or the
 connection timeout; its summary still identifies a short reply.
 If authentication succeeds but `Local camera probe closing` is followed by a
@@ -139,10 +134,8 @@ required. No packet capture or raw handshake is needed for the first report.
 
 ## Testing a beta release
 
-The 0.5.6 investigation betas were superseded by stable **0.5.6**, after a
-VM85CONNECT owner confirmed setup and live video. For normal installation, use
-the stable release. Future test betas are GitHub prereleases; the current stable
-release remains available while candidate fixes await device-owner validation.
+Use the latest stable release for normal installation. Install a beta only
+when testing a requested candidate; note its exact version in the report.
 
 In HACS, find Motorola Nursery, open the three-dot menu and choose **Redownload**.
 Under **Need a different version?**, select the requested beta tag. If it is
@@ -190,4 +183,6 @@ Debug logs report initialization stages and error categories without credentials
 or raw frames. A missing camera connection never triggers account renewal or
 cloud telemetry. Disable local mode to restore the standard transport. After a
 camera reset or relink, repeat account setup manually to refresh saved credentials.
-Writable controls, playlists and PTZ are unavailable in the experimental local mode.
+Local mode supports allowlisted settings and lullaby commands when the camera
+advertises usable capabilities. PTZ requires writable axes; actual motor behavior
+on compatible models remains unverified. See [local readings](local-readings.md).

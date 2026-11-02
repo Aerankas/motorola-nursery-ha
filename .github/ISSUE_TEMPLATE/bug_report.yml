@@ -54,7 +54,7 @@ body:
     id: logs
     attributes:
       label: Sanitized logs or diagnostics
-      description: Follow docs/troubleshooting.md to collect debug logs, including when first setup cannot finish. Remove all private data and share only integration lines.
+      description: Follow docs/guides/troubleshooting.md to collect debug logs, including when first setup cannot finish. Remove all private data and share only integration lines.
       render: text
   - type: checkboxes
     id: checks

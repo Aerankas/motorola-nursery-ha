@@ -1,41 +1,54 @@
 # Contributing
 
-Thanks for helping improve Motorola Nursery for Home Assistant.
+Compatibility reports, documentation improvements and original code contributions
+are welcome. Search existing issues and use the repository's bug, feature or
+compatibility forms where available. Include model, firmware, HA/integration
+versions, reproducible steps and the features actually tested.
 
-## Before you start
+## Before starting
 
-- Search existing issues before opening a new one.
-- Use a feature request for protocol or device support discussions.
-- Never post account identifiers, email codes, camera addresses, stream URLs,
-  tokens, credentials, packet captures, APKs, firmware, or proprietary binaries.
-- Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+Read [AGENTS.md](AGENTS.md) for implementation guardrails and
+[architecture](docs/reference/architecture.md) for component responsibilities.
+Do not post credentials, account/device identifiers, email codes, keys, signed
+URLs, private images, raw captures or HA backups. Do not contribute vendor
+binaries or proprietary source. Report vulnerabilities privately through
+[SECURITY.md](SECURITY.md).
 
-This project is an independent interoperability implementation. Contributions
-must be original and must not copy decompiled vendor source or proprietary
-libraries into the repository.
+## Development
 
-## Guides
+Fork the repository and create a focused branch from `main`. Follow
+[development and testing](docs/development/testing.md) for the test environment,
+commands and dependency sources. Use synthetic camera/service peers for tests;
+CI must not require real accounts or devices. Keep physical-device observations
+separate from automated test results.
 
-- [Development and maintenance](docs/development.md): architecture, local test
-  environments, CI, releases and live validation.
-- [Protocol reference](docs/protocol.md): transports, authentication, verified
-  values and controls, and compatibility limits.
-- [Documentation index](docs/README.md): all maintained project guides.
+Preserve config entries and entity identities across upgrades. Cover behavior
+changes, migrations, cancellation and resource cleanup with meaningful regression
+tests. Keep logs and diagnostics private-data-safe. Preserve license notices.
 
-## Pull requests
+## Documentation
 
-The `main` branch requires pull requests and blocks force pushes and deletion.
-Merge requires an up-to-date branch, resolved review
-conversations, one approving review, and passing HACS, Hassfest, minimum/current
-HA tests, both CodeQL analyses and CodeRabbit checks. Use squash merge with a clear
-PR title and description; these become the commit title and body.
+Write public documentation and code comments in English. Use
+[docs/README.md](docs/README.md) to choose a location: `guides/` for usage,
+`reference/` for current architecture, security and attribution, `development/`
+for testing, CI and releases. Update incoming links when moving a guide.
 
-- Keep changes focused and explain user-visible behavior.
-- Add or update tests for every behavior change.
-- Update translations, documentation, and the changelog when applicable.
-- Preserve local video when cloud services are unavailable.
-- Keep diagnostics and exceptions free of sensitive data.
-- Do not add arbitrary command execution, firmware, reset, storage-formatting,
-  debug-shell, or credential-export features.
+Keep documentation aligned with the implemented behavior. Keep supported migration
+steps and compatibility limits; put release history in [CHANGELOG.md](CHANGELOG.md)
+and test results in PRs or release notes. Do not add investigation diaries,
+app-analysis instructions, local lab setups or obsolete plans.
 
-By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+## Pull requests and releases
+
+Explain the user-visible problem, resulting behavior and checks performed.
+Keep changes focused and resolve failing checks and review findings before merge.
+Repository settings and workflows define the current required checks/reviews;
+do not bypass them or weaken assertions to obtain passing results.
+
+Dependency updates must preserve HA compatibility and refresh relevant locks.
+They do not publish releases automatically. Follow
+[CI and analysis](docs/development/ci.md) and
+[release preparation](docs/development/releasing.md).
+
+By participating, follow the [Code of Conduct](CODE_OF_CONDUCT.md). Contribute
+only work you are authorized to publish under the project's [license](LICENSE).
