@@ -93,6 +93,12 @@ Compatibility reports, documentation fixes and code contributions are welcome.
 See [CONTRIBUTING.md](CONTRIBUTING.md), [development](docs/development/testing.md)
 and the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+## Support
+
+If this project has been useful to you, consider
+[sponsoring my open-source work](https://github.com/sponsors/eduardobittencourt).
+Your support helps me keep building and maintaining these projects.
+
 ## License and attribution
 
 Original code is [MIT licensed](LICENSE). This independent interoperability

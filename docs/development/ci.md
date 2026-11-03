@@ -27,3 +27,11 @@ on real accounts, email delivery, camera credentials or private captures.
 
 Use [testing](testing.md) to reproduce checks and maintain dependency locks.
 Changes to minimum HA support must keep `hacs.json`, README and matrix aligned.
+
+The required Sonar status check is `SonarQube scan`, provided by GitHub Actions
+(app ID `15368`). The scanner runs with `sonar.qualitygate.wait=true`, so this
+job fails if analysis fails or the quality gate is rejected. Keep the required
+check name aligned with the workflow job; the separate SonarCloud GitHub App
+check, `SonarCloud Code Analysis`, is not required by this CI setup. Fork PRs
+run the test jobs while `SonarQube scan` and its quality gate are skipped;
+scanner credentials are never provided to fork PRs.
