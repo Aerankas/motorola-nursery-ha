@@ -10,7 +10,6 @@ import logging
 import os
 import socket
 import time
-import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 
@@ -171,18 +170,12 @@ def generate_sid(credentials: Credentials) -> bytes:
 def build_handshake(
     credentials: Credentials, *, target_port: int = INTERNAL_RTSP_PORT
 ) -> tuple[bytes, bytes]:
-    """Build a connection request and return it with the expected SID."""
+    """Build a local connection request and return it with the expected SID."""
     if not 0 <= target_port <= 0xFFFF:
         raise ValueError("Target port must fit in an unsigned 16-bit integer")
     sid = generate_sid(credentials)
-    client_id = str(uuid.uuid4()).encode()
-    request = (
-        b"v002 888 "
-        + f"{target_port:05d} {len(sid):03d} ".encode()
-        + sid
-        + f" {len(client_id):04d} ".encode()
-        + client_id
-    )
+    # The native LAN path sends the 92-byte 888 request without a v002/UUID wrapper.
+    request = f"888 {target_port:05d} {len(sid):03d} ".encode() + sid
     return request, sid
 
 
