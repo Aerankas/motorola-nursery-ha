@@ -2,6 +2,9 @@ version: 2
 updates:
   - package-ecosystem: pip
     directory: /
+    # Keep the compatibility baseline fixed until minimum HA support changes.
+    exclude-paths:
+      - requirements-test-minimum.txt
     schedule:
       interval: weekly
     groups:

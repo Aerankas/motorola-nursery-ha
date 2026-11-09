@@ -19,6 +19,11 @@ dependency auto-merge. These merges do not publish releases. Repository settings
 are authoritative for required reviews, branch freshness and merge protection.
 Resolve conflicts, failing checks and review findings before merge.
 
+The minimum-HA requirements file is excluded from Dependabot version updates
+because its test-plugin pin defines the supported compatibility baseline. Update
+that pin deliberately when changing minimum HA support. Current-HA and shared
+test-tool updates remain enabled; regenerate affected locks with their inputs.
+
 Keep analyzer findings reviewable without weakening assertions or excluding
 runtime modules to improve metrics. HA callbacks must preserve their awaitable
 framework contract. Protocol constants and legacy formats need contextual
