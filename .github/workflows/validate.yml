@@ -130,5 +130,7 @@ jobs:
           SONAR_HOST_URL: https://sonarcloud.io
         with:
           args: >-
+            ${{ vars.SONAR_ORGANIZATION && format('-Dsonar.organization={0}', vars.SONAR_ORGANIZATION) || '' }}
+            ${{ vars.SONAR_PROJECT_KEY && format('-Dsonar.projectKey={0}', vars.SONAR_PROJECT_KEY) || '' }}
             -Dsonar.projectVersion=${{ env.SONAR_PROJECT_VERSION }}
             -Dsonar.qualitygate.wait=true

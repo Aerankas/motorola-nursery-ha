@@ -30,7 +30,19 @@
         "title": "Connect to the camera",
         "description": "Enter the camera’s local IP address or hostname. Home Assistant will verify the local connection.",
         "data": {
-          "host": "Camera IP address or hostname"
+          "host": "Camera IP address or hostname",
+          "use_static_rtsp_port": "Use a static local RTSP port"
+        },
+        "data_description": {
+          "use_static_rtsp_port": "Bind the local RTSP bridge on 127.0.0.1 to a fixed port instead of a random ephemeral port. Enable this if you connect external local media services such as go2rtc or Frigate."
+        }
+      },
+      "rtsp_port": {
+        "title": "Local RTSP bridge port",
+        "description": "Bind the local RTSP bridge on 127.0.0.1 to a fixed port for local media services such as go2rtc or Frigate. When disabled, Home Assistant selects a free ephemeral port on each start.",
+        "data": {
+          "use_static_rtsp_port": "Use a static local RTSP port",
+          "rtsp_port": "Local RTSP port"
         }
       },
       "reconfigure": {
@@ -38,7 +50,8 @@
         "menu_options": {
           "user": "Connect or sign in to the Motorola account",
           "change_host": "Change the camera IP address",
-          "local_control": "Use local entity readings"
+          "local_control": "Use local entity readings",
+          "rtsp_port": "Configure local RTSP port"
         }
       },
       "change_host": {
@@ -64,6 +77,9 @@
       "code_request_failed": "The Motorola code request could not be completed. Enable debug logging and see the troubleshooting guide.",
       "cloud_error": "Motorola returned an unexpected response.",
       "invalid_host": "Enter an IP address or hostname, without a URL or port.",
+      "invalid_port": "Enter a TCP port between 1024 and 65535.",
+      "port_in_use": "This port is already in use on this Home Assistant host. Choose another port.",
+      "cannot_bind_port": "Unable to bind this local TCP port. Check the Home Assistant logs for details.",
       "invalid_device_response": "Motorola responded, but its camera details do not match the supported format. Enable debug logging and see the troubleshooting guide."
     },
     "abort": {

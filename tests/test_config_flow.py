@@ -1,5 +1,7 @@
 """Native HA onboarding, reconfiguration and safe failure behavior."""
 
+import asyncio
+import errno
 import logging
 from dataclasses import astuple, replace
 from unittest.mock import AsyncMock, patch
@@ -349,3 +351,183 @@ async def test_local_control_reconfigure_preserves_account_and_identity(hass):
     assert result["reason"] == "reconfigure_successful"
     assert dict(entry.data) == {**before, "local_control": True}
     assert entry.unique_id == DEVICE.sid_device
+
+
+@pytest.mark.asyncio
+async def test_static_rtsp_port_onboarding_and_validation(hass, caplog, socket_enabled):
+    """Onboarding supports optional static RTSP port with immediate validation."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.motorola_nursery")
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="other-camera-device-id",
+        data={**device_data(DEVICE), "host": "192.0.2.20", "rtsp_port": 8520},
+    )
+    other_entry.add_to_hass(hass)
+
+    flow = make_flow(hass)
+    assert (await flow.async_step_rtsp_port())["reason"] == "login_connection_lost"
+
+    client = make_client()
+    blocker = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", 0)
+    blocked_port = int(blocker.sockets[0].getsockname()[1])
+    free_probe = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", 0)
+    free_port = int(free_probe.sockets[0].getsockname()[1])
+    free_probe.close()
+    await free_probe.wait_closed()
+
+    try:
+        with (
+            patch(
+                "custom_components.motorola_nursery.config_flow.async_client",
+                AsyncMock(return_value=client),
+            ),
+            patch(
+                "custom_components.motorola_nursery.config_flow.MagicP2PTunnel.connect",
+                AsyncMock(return_value=AsyncMock()),
+            ),
+        ):
+            await flow.async_step_user({"email": "owner@example.test"})
+            await flow.async_step_code({"code": "123456"})
+            await flow.async_step_device({"device": DEVICE.sid_device})
+            step = await flow.async_step_host(
+                {"host": "192.0.2.10", "use_static_rtsp_port": True}
+            )
+            assert step["step_id"] == "rtsp_port"
+
+            invalid = await flow.async_step_rtsp_port(
+                {"use_static_rtsp_port": True, "rtsp_port": 80}
+            )
+            assert invalid["errors"] == {"rtsp_port": "invalid_port"}
+            assert "reason=out_of_range" in caplog.text
+
+            duplicate = await flow.async_step_rtsp_port(
+                {"use_static_rtsp_port": True, "rtsp_port": 8520}
+            )
+            assert duplicate["errors"] == {"rtsp_port": "port_in_use"}
+            assert "reason=configured_by_another_camera" in caplog.text
+
+            occupied = await flow.async_step_rtsp_port(
+                {"use_static_rtsp_port": True, "rtsp_port": blocked_port}
+            )
+            assert occupied["errors"] == {"rtsp_port": "port_in_use"}
+            assert "reason=address_in_use" in caplog.text
+            assert "errno=EADDRINUSE" in caplog.text
+
+            with patch(
+                "custom_components.motorola_nursery.config_flow.asyncio.start_server",
+                AsyncMock(
+                    side_effect=PermissionError(errno.EACCES, "Permission denied")
+                ),
+            ):
+                bind_err = await flow.async_step_rtsp_port(
+                    {"use_static_rtsp_port": True, "rtsp_port": free_port}
+                )
+            assert bind_err["errors"] == {"rtsp_port": "cannot_bind_port"}
+            assert "reason=bind_error" in caplog.text
+            assert "errno=EACCES" in caplog.text
+
+            created = await flow.async_step_rtsp_port(
+                {"use_static_rtsp_port": True, "rtsp_port": free_port}
+            )
+            assert created["type"] == FlowResultType.CREATE_ENTRY
+            assert created["data"]["rtsp_port"] == free_port
+            assert (
+                f"Local RTSP port validation succeeded: port={free_port}" in caplog.text
+            )
+    finally:
+        blocker.close()
+        await blocker.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_rtsp_port_reconfigure_and_disable(hass, socket_enabled):
+    """Reconfigure can enable, keep active bound port, and disable static port."""
+    probe = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", 0)
+    port = int(probe.sockets[0].getsockname()[1])
+    probe.close()
+    await probe.wait_closed()
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=DEVICE.sid_device,
+        data={
+            **device_data(DEVICE),
+            "host": "192.0.2.10",
+            "cloud_session": SESSION.as_dict(),
+        },
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch("homeassistant.config_entries.ConfigEntries.async_reload", AsyncMock()),
+        patch("homeassistant.config_entries.async_process_deps_reqs", AsyncMock()),
+    ):
+        flow = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "reconfigure", "entry_id": entry.entry_id}
+        )
+        flow = await hass.config_entries.flow.async_configure(
+            flow["flow_id"], {"next_step_id": "rtsp_port"}
+        )
+        assert flow["step_id"] == "rtsp_port"
+        result = await hass.config_entries.flow.async_configure(
+            flow["flow_id"], {"use_static_rtsp_port": True, "rtsp_port": port}
+        )
+        assert result["reason"] == "reconfigure_successful"
+        assert entry.data["rtsp_port"] == port
+
+        # Keep existing port while the entry's own bridge is bound to it.
+        active = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", port)
+        try:
+            entry.runtime_data = type(
+                "RuntimeStub",
+                (),
+                {"bridge": type("BridgeStub", (), {"port": port})()},
+            )()
+            flow2 = make_flow(hass, config_entries.SOURCE_RECONFIGURE, entry)
+            keep = await flow2.async_step_rtsp_port(
+                {"use_static_rtsp_port": True, "rtsp_port": port}
+            )
+            assert keep["reason"] == "reconfigure_successful"
+            assert entry.data["rtsp_port"] == port
+
+            # Disable via rtsp_port step during pending host flow and reconfigure.
+            flow3 = make_flow(hass, config_entries.SOURCE_RECONFIGURE, entry)
+            flow3._selected = DEVICE
+            flow3._session = SESSION
+            with patch(
+                "custom_components.motorola_nursery.config_flow.MagicP2PTunnel.connect",
+                AsyncMock(return_value=AsyncMock()),
+            ):
+                await flow3.async_step_host(
+                    {"host": "192.0.2.10", "use_static_rtsp_port": True}
+                )
+                disabled = await flow3.async_step_rtsp_port(
+                    {"use_static_rtsp_port": False, "rtsp_port": port}
+                )
+            assert disabled["reason"] == "reconfigure_successful"
+            assert entry.data["rtsp_port"] == 0
+
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, "rtsp_port": port}
+            )
+            flow4 = make_flow(hass, config_entries.SOURCE_RECONFIGURE, entry)
+            flow4._selected = DEVICE
+            flow4._session = SESSION
+            with patch(
+                "custom_components.motorola_nursery.config_flow.MagicP2PTunnel.connect",
+                AsyncMock(return_value=AsyncMock()),
+            ):
+                cleared = await flow4.async_step_host(
+                    {"host": "192.0.2.10", "use_static_rtsp_port": False}
+                )
+            assert cleared["reason"] == "reconfigure_successful"
+            assert entry.data["rtsp_port"] == 0
+
+            flow5 = make_flow(hass, config_entries.SOURCE_RECONFIGURE, entry)
+            reconf_off = await flow5.async_step_rtsp_port(
+                {"use_static_rtsp_port": False, "rtsp_port": port}
+            )
+            assert reconf_off["reason"] == "reconfigure_successful"
+            assert entry.data["rtsp_port"] == 0
+        finally:
+            active.close()
+            await active.wait_closed()

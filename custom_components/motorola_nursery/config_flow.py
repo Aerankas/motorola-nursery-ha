@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import errno
 import logging
 import secrets
 import string
@@ -26,6 +28,7 @@ from homeassistant.loader import async_get_integration
 from homeassistant.util.network import is_host_valid
 
 from .auth import account_lock, async_client, credentials_from_data, device_data
+from .bridge import default_rtsp_port
 from .cloud import (
     AuthenticationError,
     Challenge,
@@ -41,7 +44,9 @@ from .const import (
     CONF_DEVICE,
     CONF_EMAIL,
     CONF_LOCAL_CONTROL,
+    CONF_RTSP_PORT,
     CONF_SESSION,
+    CONF_USE_STATIC_RTSP_PORT,
     DOMAIN,
 )
 from .protocol import MagicP2PTunnel
@@ -65,6 +70,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         self._devices: dict[str, Device] = {}
         self._selected: Device | None = None
+        self._pending_data: dict[str, Any] | None = None
         self._expiry: asyncio.TimerHandle | None = None
 
     def _target_entry(self):
@@ -310,12 +316,134 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "invalid_auth"
                 else:
                     _LOGGER.debug("Local camera probe accepted: source=account_setup")
+                    if user_input.get(CONF_USE_STATIC_RTSP_PORT, False):
+                        self._pending_data = data
+                        return await self.async_step_rtsp_port()
+                    if CONF_RTSP_PORT in previous:
+                        data[CONF_RTSP_PORT] = 0
                     return await self._async_save_account_camera(target, data)
         return self.async_show_form(
             step_id="host",
             errors=errors,
             data_schema=vol.Schema(
-                {vol.Required(CONF_HOST, default=previous.get(CONF_HOST, "")): str}
+                {
+                    vol.Required(CONF_HOST, default=previous.get(CONF_HOST, "")): str,
+                    vol.Required(
+                        CONF_USE_STATIC_RTSP_PORT,
+                        default=bool(previous.get(CONF_RTSP_PORT)),
+                    ): bool,
+                }
+            ),
+        )
+
+    async def _async_validate_rtsp_port(self, port: int, target) -> str | None:
+        """Ensure the chosen static port is in range and available on loopback."""
+        if (
+            isinstance(port, bool)
+            or not isinstance(port, int)
+            or not 1024 <= port <= 65535
+        ):
+            _LOGGER.debug(
+                "Local RTSP port validation failed: port=%s reason=out_of_range",
+                port,
+            )
+            return "invalid_port"
+        target_id = target.entry_id if target is not None else None
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if entry.entry_id != target_id and entry.data.get(CONF_RTSP_PORT) == port:
+                _LOGGER.warning(
+                    "Local RTSP port validation failed: port=%d "
+                    "reason=configured_by_another_camera",
+                    port,
+                )
+                return "port_in_use"
+        current_port = 0
+        if target is not None:
+            runtime = getattr(target, "runtime_data", None)
+            bridge = getattr(runtime, "bridge", None)
+            if bridge is not None:
+                with contextlib.suppress(RuntimeError):
+                    current_port = bridge.port
+        if port != current_port:
+            try:
+                probe = await asyncio.start_server(
+                    lambda _r, _w: None, "127.0.0.1", port
+                )
+            except OSError as err:
+                err_code = errno.errorcode.get(err.errno, str(err.errno))
+                if err.errno == errno.EADDRINUSE:
+                    _LOGGER.warning(
+                        "Local RTSP port validation failed: port=%d "
+                        "reason=address_in_use error=%s errno=%s (%s)",
+                        port,
+                        type(err).__name__,
+                        err_code,
+                        err.strerror or err,
+                    )
+                    return "port_in_use"
+                _LOGGER.warning(
+                    "Local RTSP port validation failed: port=%d "
+                    "reason=bind_error error=%s errno=%s (%s)",
+                    port,
+                    type(err).__name__,
+                    err_code,
+                    err.strerror or err,
+                )
+                return "cannot_bind_port"
+            probe.close()
+            await probe.wait_closed()
+        _LOGGER.debug("Local RTSP port validation succeeded: port=%d", port)
+        return None
+
+    async def async_step_rtsp_port(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure or validate an optional static loopback port for RTSP."""
+        target = self._target_entry()
+        pending = self._pending_data
+        if pending is None and target is None:
+            return self.async_abort(reason="login_connection_lost")
+        source_data = pending if pending is not None else target.data
+        existing_port = int((target.data.get(CONF_RTSP_PORT, 0) if target else 0) or 0)
+        default_use_static = True if pending is not None else bool(existing_port)
+        default_port = existing_port or default_rtsp_port(source_data[CONF_HOST])
+        errors = {}
+        if user_input is not None:
+            use_static = bool(user_input.get(CONF_USE_STATIC_RTSP_PORT, True))
+            port = user_input.get(CONF_RTSP_PORT, default_port)
+            default_use_static = use_static
+            default_port = port
+            if use_static:
+                error = await self._async_validate_rtsp_port(port, target)
+                if error is not None:
+                    errors[CONF_RTSP_PORT] = error
+                else:
+                    if pending is not None:
+                        self._pending_data = None
+                        return await self._async_save_account_camera(
+                            target, {**pending, CONF_RTSP_PORT: port}
+                        )
+                    return self.async_update_reload_and_abort(
+                        target, data_updates={CONF_RTSP_PORT: port}
+                    )
+            else:
+                if pending is not None:
+                    self._pending_data = None
+                    data = {**pending, CONF_RTSP_PORT: 0} if existing_port else pending
+                    return await self._async_save_account_camera(target, data)
+                return self.async_update_reload_and_abort(
+                    target, data_updates={CONF_RTSP_PORT: 0}
+                )
+        return self.async_show_form(
+            step_id="rtsp_port",
+            errors=errors,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_USE_STATIC_RTSP_PORT, default=default_use_static
+                    ): bool,
+                    vol.Required(CONF_RTSP_PORT, default=default_port): int,
+                }
             ),
         )
 
@@ -331,7 +459,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_reconfigure(self, user_input=None) -> ConfigFlowResult:
         return self.async_show_menu(
-            step_id="reconfigure", menu_options=["user", "change_host", "local_control"]
+            step_id="reconfigure",
+            menu_options=["user", "change_host", "local_control", "rtsp_port"],
         )
 
     async def async_step_local_control(self, user_input=None) -> ConfigFlowResult:
