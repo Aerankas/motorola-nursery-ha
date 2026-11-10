@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 CAMERA_PORT = 77
 INTERNAL_RTSP_PORT = 6667
+INTERNAL_TALKBACK_PORT = 8999
 CONNECT_TIMEOUT = 8
 # Supported input sizes, not the minimum padding widths used in generate_sid.
 MIN_SID_DEVICE_LENGTH = 3
