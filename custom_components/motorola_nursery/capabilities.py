@@ -52,8 +52,12 @@ def playlist_supported(data: TelemetryData | None) -> bool:
 
 
 def ptz_supported(data: TelemetryData | None, axis: str) -> bool:
+    if axis == "ptz":
+        return writable(data, "ptz", "int") and (
+            data.capabilities["ptz"].minimum <= 0 <= data.capabilities["ptz"].maximum
+        )
     if not writable(data, axis, "str"):
         return False
     cap = data.capabilities[axis]
-    lengths = {"pan": (4, 5), "tilt": (2, 4), "ptz": (6, 6)}[axis]
+    lengths = {"pan": (4, 5), "tilt": (2, 4)}[axis]
     return cap.minimum <= lengths[0] and cap.maximum >= lengths[1]

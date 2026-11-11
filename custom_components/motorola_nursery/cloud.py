@@ -147,6 +147,8 @@ def _model_family(value: str) -> str:
         return "VM65"
     if value in {"VM85", "VM85CONNECT"}:
         return "VM85"
+    if value in {"PIP1610", "PIP1610HD", "PIP1610HDCONNECT"}:
+        return "PIP1610"
     return "other"
 
 

@@ -465,7 +465,17 @@ def test_device_list_records_multiple_rejections_and_redacts_unknown_model(caplo
 
 
 @pytest.mark.parametrize(
-    "model", ["VM65", "VM65CONNECT", "VM85", "VM85CONNECT", "other-private-model"]
+    "model",
+    [
+        "VM65",
+        "VM65CONNECT",
+        "VM85",
+        "VM85CONNECT",
+        "PIP1610",
+        "PIP1610HD",
+        "PIP1610HDCONNECT",
+        "other-private-model",
+    ],
 )
 @pytest.mark.parametrize(
     "owner,token_length,device_length",

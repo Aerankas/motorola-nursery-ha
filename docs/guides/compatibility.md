@@ -7,6 +7,7 @@
 | Model | Firmware | Confirmed scope |
 | --- | --- | --- |
 | VM65CONNECT, hardware V1.2.03 | V1.6.37 | Email-code login, local snapshot/HLS with H.264/AAC, temperature/Wi-Fi readings, motion/sound events, advertised settings and LAN lullaby playback/volume. |
+| PIP1610HDCONNECT, hardware V1.0 | V1.2.15 | Email-code login, local snapshot/HLS with H.264/AAC, temperature/Wi-Fi readings, motion/sound events, advertised settings, lullaby playback/volume and directional pan/tilt controls. |
 | VM85CONNECT | V1.6.45 | Owner-reported account setup, local connection and live video. Temperature and motion had an initial check; audio, writable controls and prolonged use were not separately validated. |
 
 The VM85CONNECT result was reported with Home Assistant 2026.10.4 and
@@ -19,8 +20,9 @@ Synthetic protocol tests do not establish additional retail-model compatibility.
 ## Feature limits
 
 Entities depend on advertised capabilities and usable values. A model name does
-not enable PTZ. VM65CONNECT does not advertise the required axes; physical PTZ
-on models that do advertise them remains unverified. Talkback is not integrated.
+not enable PTZ. VM65CONNECT does not advertise the required axes; PIP1610HDCONNECT
+exposes directional `pan` and `tilt` controls and an integer `ptz` capability.
+Talkback is not integrated.
 Anti-flicker effectiveness, thermal alarm firing, sensitivity calibration and
 spatial-zone exclusion are not established by successful setting writes.
 

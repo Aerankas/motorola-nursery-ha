@@ -184,8 +184,8 @@ def make_control_transport(state, commands):
             response = (
                 b"caplist 9 video_brightness w int 0 4 playing w str 1 128 "
                 b"audio_control w int 0 1 speaker_volume w int 1 6 "
-                b"wifi_ssid r str 1 64 existsongs r str 1 1024 pan w str 1 16 "
-                b"tilt w str 1 16 ptz w str 1 16\n"
+                b"wifi_ssid r str 1 64 existsongs r str 1 1024 pan w str -1 6 "
+                b"tilt w str -1 6 ptz w int -1 6\n"
             )
         elif parts[:2] == ["set", "existsongs"]:
             response = b"set existsongs Twinkle_Little_Star.mp3,White_Noise.mp3\n"
@@ -261,7 +261,7 @@ def test_access_and_command_capabilities_are_retained_without_reading_commands()
     caps = parse_capabilities(
         [
             "caplist",
-            "3",
+            "5",
             "video_brightness",
             "r",
             "int",
@@ -270,8 +270,18 @@ def test_access_and_command_capabilities_are_retained_without_reading_commands()
             "pan",
             "w",
             "str",
-            "1",
-            "16",
+            "-1",
+            "6",
+            "tilt",
+            "w",
+            "str",
+            "-1",
+            "6",
+            "ptz",
+            "w",
+            "int",
+            "-1",
+            "6",
             "existsongs",
             "r",
             "str",
@@ -281,6 +291,8 @@ def test_access_and_command_capabilities_are_retained_without_reading_commands()
     )
     assert caps["video_brightness"].writable is False
     assert caps["pan"].writable is True
+    assert caps["tilt"].writable is True
+    assert caps["ptz"].writable is True
     assert "existsongs" in caps
 
 

@@ -61,12 +61,12 @@ insufficient. Follow the [local readings guide](docs/guides/local-readings.md).
 
 ## Compatibility and limitations
 
-Local playback has been verified on **VM65CONNECT** and reported by a
-**VM85CONNECT** owner. Firmware and per-feature results are recorded in the
-[compatibility guide](docs/guides/compatibility.md).
+Local playback has been verified on **VM65CONNECT** and **PIP1610HDCONNECT**,
+and reported by a **VM85CONNECT** owner. Firmware and per-feature results are
+recorded in the [compatibility guide](docs/guides/compatibility.md).
 
-- Support varies by model and advertised capabilities. PTZ movement on models
-  exposing writable axes remains unverified; talkback is not integrated.
+- Support varies by model and advertised capabilities. Directional PTZ movement
+  has been verified on **PIP1610HDCONNECT**; talkback is not integrated.
 - Camera address discovery is not implemented.
 - Cloud outages affect the default telemetry transport; local video remains independent.
 - Incoming LAN readings have no cloud fallback or automatic credential renewal.

@@ -28,7 +28,6 @@ STRING_FIELDS = frozenset(
         "existsongs",
         "pan",
         "tilt",
-        "ptz",
     }
 )
 COMMAND_FIELDS = frozenset({"existsongs", "pan", "tilt", "ptz"})
@@ -432,7 +431,7 @@ class TelemetryClient:
         if axis == "ptz" and direction == "origin":
             async with self._lock, self._session(credentials) as (reader, writer):
                 caps = await self._get_capabilities(reader, writer)
-                self._require_write(caps, "ptz", "str", "origin")
+                self._require_write(caps, "ptz", "int", 0)
                 response = await self._exchange(
                     reader, writer, "set ptz origin", "set", "ptz"
                 )

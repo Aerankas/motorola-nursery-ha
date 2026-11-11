@@ -253,7 +253,7 @@ async def test_camera_waits_for_rtsp_after_ack(monkeypatch, long_ack):
     async def camera(reader, writer):
         """Wait for a client request before sending the optional echo and RTSP."""
         try:
-            handshake = await reader.readexactly(139)
+            handshake = await reader.readexactly(92)
             writer.write(b"ok 0 dconn")
             await writer.drain()
             decoder = protocol.MagicCipher(credentials.magic_token)
@@ -265,7 +265,7 @@ async def test_camera_waits_for_rtsp_after_ack(monkeypatch, long_ack):
                 plain += decoder.decode(chunk)
             # Delay the long suffix until after RTSP, splitting it byte by byte.
             if long_ack:
-                for value in b" " + handshake.split()[4] + b"\n":
+                for value in b" " + handshake.split()[3] + b"\n":
                     writer.write(bytes([value]))
                     await writer.drain()
                     await asyncio.sleep(0)
@@ -434,12 +434,12 @@ class CipherTest(unittest.TestCase):
         sid = protocol.generate_sid(credentials)
         request, request_sid = protocol.build_handshake(credentials)
         self.assertEqual(len(sid), 78)
+        self.assertEqual(len(request), 92)
         self.assertEqual(request_sid, sid)
-        self.assertTrue(request.startswith(b"v002 888 06667 078 "))
-        self.assertIn(sid, request)
+        self.assertEqual(request, b"888 06667 078 " + sid)
 
         request, _ = protocol.build_handshake(credentials, target_port=8080)
-        self.assertTrue(request.startswith(b"v002 888 08080 078 "))
+        self.assertEqual(request, b"888 08080 078 " + sid)
 
     def test_handshake_rejects_invalid_target_port(self) -> None:
         credentials = protocol.Credentials(
@@ -473,9 +473,9 @@ class TunnelTest(unittest.IsolatedAsyncioTestCase):
         async def fake_camera(
             reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         ) -> None:
-            handshake = await reader.readexactly(139)
-            requested_ports.append(handshake.split()[2])
-            sid = handshake.split()[4]
+            handshake = await reader.readexactly(92)
+            requested_ports.append(handshake.split()[1])
+            sid = handshake.split()[3]
             writer.write(b"ok 0 dconn " + sid + b"\n")
             await writer.drain()
             decoder = protocol.MagicCipher(credentials.magic_token)
