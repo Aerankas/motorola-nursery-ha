@@ -2,11 +2,17 @@
 
 ## Unreleased
 
+## 0.8.1 — 2026-11-11
+
+- Add PIP1610HDCONNECT compatibility, including camera-advertised integer PTZ
+  controls, and list supported models alphabetically.
+- Use the short native LAN video handshake for compatibility with additional
+  camera firmware.
+
 - Package future HACS releases as integration-only ZIP assets and expose their
   GitHub asset download counts.
 - Analyze external pull requests through a maintainer-approved Sonar workflow
   without providing scanner credentials to contributor code.
-
 - Simplify control parsing, notification dispatch and transport setup while
   preserving credentials, entity identities and LAN/cloud isolation.
 - Strengthen malformed-frame, queue-limit and input-validation regression tests.
