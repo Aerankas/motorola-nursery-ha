@@ -6,8 +6,8 @@
 
 | Model | Firmware | Confirmed scope |
 | --- | --- | --- |
-| VM65CONNECT, hardware V1.2.03 | V1.6.37 | Email-code login, local snapshot/HLS with H.264/AAC, temperature/Wi-Fi readings, motion/sound events, advertised settings and LAN lullaby playback/volume. |
 | PIP1610HDCONNECT, hardware V1.0 | V1.2.15 | Email-code login, local snapshot/HLS with H.264/AAC, temperature/Wi-Fi readings, motion/sound events, advertised settings, lullaby playback/volume and directional pan/tilt controls. |
+| VM65CONNECT, hardware V1.2.03 | V1.6.37 | Email-code login, local snapshot/HLS with H.264/AAC, temperature/Wi-Fi readings, motion/sound events, advertised settings and LAN lullaby playback/volume. |
 | VM85CONNECT | V1.6.45 | Owner-reported account setup, local connection and live video. Temperature and motion had an initial check; audio, writable controls and prolonged use were not separately validated. |
 
 The VM85CONNECT result was reported with Home Assistant 2026.10.4 and

@@ -1,0 +1,105 @@
+name: Approved fork analysis
+
+on:
+  workflow_run:
+    workflows: [Validate]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-sonar-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Identify reviewed fork commit
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: read
+      deployments: read
+    outputs:
+      pr: ${{ steps.metadata.outputs.pr }}
+      sha: ${{ steps.metadata.outputs.sha }}
+      artifact: ${{ steps.metadata.outputs.artifact }}
+      check: ${{ steps.metadata.outputs.check }}
+      base_sha: ${{ steps.metadata.outputs.base_sha }}
+    steps:
+      # workflow_run runs the workflow from the default branch. Keep helper code
+      # on that trusted revision; a fork's helper must never execute here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+      - name: Verify CI and protected approval; queue original PR check
+        id: metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          ANALYSIS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 -I trusted/scripts/fork_sonar.py prepare
+
+  analyze:
+    name: Scan approved fork sources
+    needs: prepare
+    environment:
+      name: sonar-fork-analysis
+      url: ${{ github.server_url }}/${{ github.repository }}/pull/${{ needs.prepare.outputs.pr }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: read
+      deployments: read
+    env:
+      BASE_BRANCH: ${{ github.event.repository.default_branch }}
+      BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+      PR_NUMBER: ${{ needs.prepare.outputs.pr }}
+      HEAD_SHA: ${{ needs.prepare.outputs.sha }}
+      CHECK_ID: ${{ needs.prepare.outputs.check }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+      # Materialize tracked blobs with anonymous, read-only Git operations.
+      # No checkout action receives a fork ref; hooks, LFS filters and fsmonitor
+      # are disabled before the candidate tree is written.
+      - name: Fetch approved sources without running contribution hooks or filters
+        run: bash trusted/scripts/fetch_sonar_sources.sh candidate
+      - name: Download coverage from the exact successful validation run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.prepare.outputs.artifact }}
+        run: gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/fork-coverage.zip"
+      - name: Reject stale heads and unsafe inputs; use trusted scanner settings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_DIR: ${{ github.workspace }}/candidate
+          COVERAGE_ARCHIVE: ${{ runner.temp }}/fork-coverage.zip
+        run: python3 -I trusted/scripts/fork_sonar.py stage
+      - name: Analyze approved sources and wait for the quality gate
+        id: scan
+        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          projectBaseDir: candidate
+      - name: Report actual result on the approved PR commit
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: python3 -I trusted/scripts/fork_sonar.py finish

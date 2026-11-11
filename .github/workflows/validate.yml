@@ -66,12 +66,20 @@ jobs:
         env:
           COVERAGE_FILE: .coverage.python
 
+      - name: Export current HA coverage XML
+        if: matrix.ha == 'current'
+        run: coverage xml -o coverage.xml
+        env:
+          COVERAGE_FILE: .coverage.python
+
       - name: Upload current HA coverage
         if: matrix.ha == 'current'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-python
-          path: .coverage.python
+          path: |
+            .coverage.python
+            coverage.xml
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7

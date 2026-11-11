@@ -1,4 +1,7 @@
 {
   "name": "Motorola Nursery",
-  "homeassistant": "2026.9.3"
+  "homeassistant": "2026.9.3",
+  "zip_release": true,
+  "filename": "motorola_nursery.zip",
+  "hide_default_branch": true
 }

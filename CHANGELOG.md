@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Package future HACS releases as integration-only ZIP assets and expose their
+  GitHub asset download counts.
+- Analyze external pull requests through a maintainer-approved Sonar workflow
+  without providing scanner credentials to contributor code.
+
 - Simplify control parsing, notification dispatch and transport setup while
   preserving credentials, entity identities and LAN/cloud isolation.
 - Strengthen malformed-frame, queue-limit and input-validation regression tests.
