@@ -5,8 +5,18 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from custom_components.motorola_nursery.bridge import RtspBridge, default_rtsp_port
-from custom_components.motorola_nursery.protocol import Credentials, MagicP2PTunnel
+from custom_components.motorola_nursery.bridge import (
+    TALKBACK_CHUNK_BYTES,
+    RtspBridge,
+    decode_alaw_to_s16le,
+    default_rtsp_port,
+    extract_rtp_payload,
+)
+from custom_components.motorola_nursery.protocol import (
+    INTERNAL_TALKBACK_PORT,
+    Credentials,
+    MagicP2PTunnel,
+)
 
 
 @pytest.mark.asyncio
@@ -194,6 +204,78 @@ async def test_streaming_request_injects_current_access_token(socket_enabled):
                 b"DESCRIBE rtsp://127.0.0.1/owner/streaming"
                 b"?accessToken=active-token RTSP/1.0\r\n\r\n"
             )
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await bridge.stop()
+
+
+def test_decode_alaw_to_s16le_and_extract_rtp_payload():
+    """Verify G.711 A-law decoding and RTP header/extension/padding stripping."""
+    pcm = decode_alaw_to_s16le(b"\xd5\x55")
+    assert len(pcm) == 4
+    assert pcm == b"\x08\x00\xf8\xff"
+
+    assert extract_rtp_payload(b"short") == b""
+    assert extract_rtp_payload(b"\x00" * 16) == b""
+    rtp_basic = b"\x80\x08\x00\x01\x00\x00\x00\xa0\x12\x34\x56\x78" + b"\xd5" * 160
+    assert extract_rtp_payload(rtp_basic) == b"\xd5" * 160
+
+    rtp_ext_pad = (
+        b"\xb0\x08\x00\x01\x00\x00\x00\xa0\x12\x34\x56\x78"
+        b"\xbe\xde\x00\x01\x11\x22\x33\x44"
+        b"payload"
+        b"\x00\x02"
+    )
+    assert extract_rtp_payload(rtp_ext_pad) == b"payload"
+
+
+@pytest.mark.asyncio
+async def test_talkback_rtsp_and_pcm_streaming(socket_enabled):
+    """Verify /talkback RTSP negotiation and lazy port 8999 PCM chunk forwarding."""
+    talkback_tunnel = AsyncMock()
+    credentials = Credentials(123456, b"synthetic-device", b"test-token", "u", "p", "t")
+    bridge = RtspBridge("192.0.2.10", credentials, lambda err: None)
+    connect_mock = AsyncMock(return_value=talkback_tunnel)
+    with patch(
+        "custom_components.motorola_nursery.bridge.MagicP2PTunnel.connect",
+        connect_mock,
+    ):
+        await bridge.start()
+        reader, writer = await asyncio.open_connection("127.0.0.1", bridge.port)
+        try:
+            writer.write(
+                b"OPTIONS rtsp://127.0.0.1/talkback RTSP/1.0\r\nCSeq: 1\r\n\r\n"
+                b"DESCRIBE rtsp://127.0.0.1/talkback RTSP/1.0\r\nCSeq: 2\r\n\r\n"
+                b"SETUP rtsp://127.0.0.1/talkback/track0 RTSP/1.0\r\nCSeq: 3\r\n"
+                b"Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+                b"PLAY rtsp://127.0.0.1/talkback RTSP/1.0\r\nCSeq: 4\r\n\r\n"
+            )
+            await writer.drain()
+            resp = await asyncio.wait_for(reader.read(4096), 1)
+            assert b"a=sendonly" in resp
+            assert b"PCMA/8000/1" in resp
+            connect_mock.assert_not_awaited()
+
+            rtp_pkt = (
+                b"\x80\x08\x00\x01\x00\x00\x00\xa0\x12\x34\x56\x78" + b"\xd5" * 400
+            )
+            frame = b"$\x00" + len(rtp_pkt).to_bytes(2, "big") + rtp_pkt
+            writer.write(
+                frame
+                + b"TEARDOWN rtsp://127.0.0.1/talkback RTSP/1.0\r\nCSeq: 5\r\n\r\n"
+            )
+            await writer.drain()
+            await asyncio.wait_for(reader.read(4096), 1)
+            await asyncio.wait_for(asyncio.gather(*tuple(bridge._tasks)), 1)
+
+            connect_mock.assert_awaited_once_with(
+                "192.0.2.10", credentials, target_port=INTERNAL_TALKBACK_PORT
+            )
+            assert talkback_tunnel.send.await_count == 2
+            for call in talkback_tunnel.send.await_args_list:
+                assert len(call.args[0]) == TALKBACK_CHUNK_BYTES
+            talkback_tunnel.close.assert_awaited_once()
         finally:
             writer.close()
             await writer.wait_closed()
