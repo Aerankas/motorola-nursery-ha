@@ -4,9 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
+import re
 from collections.abc import Callable
 
 from .protocol import Credentials, MagicP2PTunnel
+
+_STREAMING_PATH_RE = re.compile(
+    rb"/owner/streaming(?:\?accessToken=[^ \r\n]+)?(?= RTSP/1\.0)"
+)
+
+
+def default_rtsp_port(camera_host: str) -> int:
+    """Return 8500 + IPv4 final octet (when 1..254), or 8554 otherwise."""
+    with contextlib.suppress(ipaddress.AddressValueError):
+        last_octet = ipaddress.IPv4Address(camera_host).packed[3]
+        if 1 <= last_octet <= 254:
+            return 8500 + last_octet
+    return 8554
 
 
 class RtspBridge:
@@ -17,10 +32,13 @@ class RtspBridge:
         camera_host: str,
         credentials: Credentials,
         on_connection_error: Callable[[Exception], None],
+        *,
+        port: int = 0,
     ) -> None:
         self._camera_host = camera_host
         self._credentials = credentials
         self._on_connection_error = on_connection_error
+        self._preferred_port = port
         self._server: asyncio.Server | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         self._slots = asyncio.Semaphore(4)
@@ -42,11 +60,14 @@ class RtspBridge:
         return len(self._tasks)
 
     async def start(self) -> None:
-        """Start the listener on an ephemeral loopback port."""
+        """Start the listener on an ephemeral or configured loopback port."""
         if self._server is not None:
             return
         self._server = await asyncio.start_server(
-            self._accept, "127.0.0.1", 0, limit=256 * 1024
+            self._accept,
+            "127.0.0.1",
+            self._preferred_port,
+            limit=256 * 1024,
         )
 
     async def stop(self) -> None:
@@ -89,6 +110,12 @@ class RtspBridge:
 
             async def client_to_camera() -> None:
                 while data := await reader.read(65536):
+                    if b"/owner/streaming" in data and self._credentials.access_token:
+                        token_bytes = self._credentials.access_token.encode("ascii")
+                        data = _STREAMING_PATH_RE.sub(
+                            b"/owner/streaming?accessToken=" + token_bytes,
+                            data,
+                        )
                     await tunnel.send(data)
 
             async def camera_to_client() -> None:

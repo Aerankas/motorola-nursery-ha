@@ -30,7 +30,19 @@
         "title": "Conectar à câmera",
         "description": "Informe o IP local ou nome de rede da câmera. O Home Assistant verificará a conexão local.",
         "data": {
-          "host": "IP ou nome de rede da câmera"
+          "host": "IP ou nome de rede da câmera",
+          "use_static_rtsp_port": "Usar uma porta RTSP local fixa"
+        },
+        "data_description": {
+          "use_static_rtsp_port": "Associa a ponte RTSP local em 127.0.0.1 a uma porta fixa em vez de uma porta efêmera aleatória. Ative se você conectar serviços locais de mídia como go2rtc ou Frigate."
+        }
+      },
+      "rtsp_port": {
+        "title": "Porta da ponte RTSP local",
+        "description": "Associa a ponte RTSP local em 127.0.0.1 a uma porta fixa para serviços locais de mídia como go2rtc ou Frigate. Quando desativado, o Home Assistant escolhe uma porta efêmera livre a cada inicialização.",
+        "data": {
+          "use_static_rtsp_port": "Usar uma porta RTSP local fixa",
+          "rtsp_port": "Porta RTSP local"
         }
       },
       "reconfigure": {
@@ -38,7 +50,8 @@
         "menu_options": {
           "user": "Conectar ou autenticar a conta Motorola",
           "change_host": "Alterar o IP da câmera",
-          "local_control": "Usar leituras locais das entidades"
+          "local_control": "Usar leituras locais das entidades",
+          "rtsp_port": "Configurar porta RTSP local"
         }
       },
       "change_host": {
@@ -64,6 +77,9 @@
       "code_request_failed": "Não foi possível concluir a solicitação de código à Motorola. Ative o log de depuração e consulte o guia de solução de problemas.",
       "cloud_error": "A Motorola retornou uma resposta inesperada.",
       "invalid_host": "Informe um IP ou nome de rede, sem URL ou porta.",
+      "invalid_port": "Informe uma porta TCP entre 1024 e 65535.",
+      "port_in_use": "Esta porta já está em uso neste host do Home Assistant. Escolha outra porta.",
+      "cannot_bind_port": "Não foi possível associar esta porta TCP local. Consulte os logs do Home Assistant para mais detalhes.",
       "invalid_device_response": "A Motorola respondeu, mas os dados das câmeras não são compatíveis com esta integração. Ative o log de depuração e consulte o guia de solução de problemas."
     },
     "abort": {

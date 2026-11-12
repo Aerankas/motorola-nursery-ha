@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import ssl
 import time
@@ -19,7 +20,7 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from .auth import async_refresh_credentials, credentials_from_data
 from .bridge import RtspBridge
 from .cloud import AuthenticationError, CloudError
-from .const import CONF_LOCAL_CONTROL, CONF_SESSION, DOMAIN, PLATFORMS
+from .const import CONF_LOCAL_CONTROL, CONF_RTSP_PORT, CONF_SESSION, DOMAIN, PLATFORMS
 from .coordinator import MotorolaTelemetryCoordinator
 from .entity import async_remove_setting_mirrors
 from .events import MotorolaEventManager
@@ -199,8 +200,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if runtime is not None:
             runtime.recover_after_tunnel_error()
 
-    bridge = RtspBridge(entry.data["host"], credentials, log_connection_error)
-    await bridge.start()
+    configured_port = int(entry.data.get(CONF_RTSP_PORT, 0) or 0)
+    bridge = RtspBridge(
+        entry.data["host"],
+        credentials,
+        log_connection_error,
+        port=configured_port,
+    )
+    try:
+        await bridge.start()
+    except OSError as err:
+        err_code = errno.errorcode.get(err.errno, str(err.errno))
+        _LOGGER.warning(
+            "Local RTSP bridge listener failed to start: port=%d "
+            "error=%s errno=%s (%s)",
+            configured_port,
+            type(err).__name__,
+            err_code,
+            err.strerror or err,
+        )
+        raise ConfigEntryNotReady(
+            f"Local RTSP bridge port {configured_port} unavailable ({err_code})"
+        ) from None
 
     def log_process_error(return_code: int) -> None:
         _LOGGER.debug("Local audio transcoder exited with code %d", return_code)

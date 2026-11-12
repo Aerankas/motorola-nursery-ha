@@ -225,3 +225,43 @@ async def test_local_entry_uses_no_cloud_and_keeps_entity_ids(hass, socket_enabl
                 await connection.writer.wait_closed()
             if server._entries:
                 await server.unregister(entry.entry_id)
+
+
+async def test_occupied_static_rtsp_port_defers_entry_setup(hass, caplog):
+    """Static RTSP port collision during startup triggers ConfigEntryNotReady."""
+    import errno
+
+    from homeassistant.config_entries import ConfigEntryState
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="synthetic-device",
+        data={
+            "host": "192.0.2.10",
+            "sid_user_id": "123456",
+            "sid_device": "synthetic-device",
+            "magic_token": "synthetic-token",
+            "rtsp_username": "user",
+            "rtsp_password": "password",
+            "access_token": "access",
+            "rtsp_port": 8510,
+        },
+    )
+    entry.add_to_hass(hass)
+    bridge = Mock(
+        start=AsyncMock(side_effect=OSError(errno.EADDRINUSE, "Address in use")),
+        stop=AsyncMock(),
+    )
+    with (
+        patch(
+            "homeassistant.components.ffmpeg.async_setup", AsyncMock(return_value=True)
+        ),
+        patch(
+            "homeassistant.components.stream.async_setup", AsyncMock(return_value=True)
+        ),
+        patch("custom_components.motorola_nursery.RtspBridge", return_value=bridge),
+    ):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+        assert entry.state is ConfigEntryState.SETUP_RETRY
+        assert "Local RTSP bridge listener failed to start: port=8510" in caplog.text
+        assert "errno=EADDRINUSE" in caplog.text

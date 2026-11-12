@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from custom_components.motorola_nursery.bridge import RtspBridge
+from custom_components.motorola_nursery.bridge import RtspBridge, default_rtsp_port
 from custom_components.motorola_nursery.protocol import Credentials, MagicP2PTunnel
 
 
@@ -123,6 +123,77 @@ async def test_partial_echo_timeout_releases_bridge_slot(socket_enabled, monkeyp
             camera_writer.wait_closed.assert_awaited_once()
             errors.assert_called_once()
             assert isinstance(errors.call_args.args[0], TimeoutError)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await bridge.stop()
+
+
+async def test_configured_and_ephemeral_loopback_port_selection(socket_enabled):
+    """Bridge uses ephemeral port by default and binds configured static port."""
+    assert default_rtsp_port("192.0.2.10") == 8510
+    assert default_rtsp_port("192.0.2.255") == 8554
+    assert default_rtsp_port("camera.local") == 8554
+
+    credentials = Credentials(123456, b"synthetic-device", b"test-token", "u", "p", "t")
+    ephemeral_bridge = RtspBridge("192.0.2.10", credentials, lambda err: None)
+    try:
+        await ephemeral_bridge.start()
+        assert ephemeral_bridge.port > 0
+        await ephemeral_bridge.start()
+        occupied_port = ephemeral_bridge.port
+
+        conflict_bridge = RtspBridge(
+            "192.0.2.11", credentials, lambda err: None, port=occupied_port
+        )
+        with pytest.raises(OSError):
+            await conflict_bridge.start()
+    finally:
+        await ephemeral_bridge.stop()
+
+    static_bridge = RtspBridge(
+        "192.0.2.10", credentials, lambda err: None, port=occupied_port
+    )
+    try:
+        await static_bridge.start()
+        assert static_bridge.port == occupied_port
+    finally:
+        await static_bridge.stop()
+
+
+async def test_streaming_request_injects_current_access_token(socket_enabled):
+    """Bridge injects or replaces accessToken on /owner/streaming requests."""
+    sent = asyncio.Event()
+    tunnel = AsyncMock()
+
+    async def record_send(data: bytes) -> None:
+        if b"/owner/streaming" in data:
+            sent.set()
+
+    async def pending_receive() -> bytes:
+        await asyncio.Future()
+        return b""
+
+    tunnel.send.side_effect = record_send
+    tunnel.receive.side_effect = pending_receive
+    credentials = Credentials(
+        123456, b"synthetic-device", b"test-token", "u", "p", "active-token"
+    )
+    bridge = RtspBridge("192.0.2.10", credentials, lambda err: None)
+    with patch(
+        "custom_components.motorola_nursery.bridge.MagicP2PTunnel.connect",
+        AsyncMock(return_value=tunnel),
+    ):
+        await bridge.start()
+        _, writer = await asyncio.open_connection("127.0.0.1", bridge.port)
+        try:
+            writer.write(b"DESCRIBE rtsp://127.0.0.1/owner/streaming RTSP/1.0\r\n\r\n")
+            await writer.drain()
+            await asyncio.wait_for(sent.wait(), 1)
+            tunnel.send.assert_awaited_with(
+                b"DESCRIBE rtsp://127.0.0.1/owner/streaming"
+                b"?accessToken=active-token RTSP/1.0\r\n\r\n"
+            )
         finally:
             writer.close()
             await writer.wait_closed()
